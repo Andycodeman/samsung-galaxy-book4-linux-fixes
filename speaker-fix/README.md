@@ -1,5 +1,19 @@
 # Samsung Galaxy Book4 — Speaker Fix (MAX98390 HDA Driver)
 
+## Quick Install
+
+Download and install in one step — no git required:
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/speaker-fix && sudo ./install.sh && sudo reboot
+```
+
+**Already cloned?** `sudo ./install.sh && sudo reboot`
+
+To uninstall: `sudo ./uninstall.sh && sudo reboot`
+
+---
+
 > **Battery Impact:** This workaround keeps the speaker amplifiers powered on at all times (even when not playing audio), which uses an estimated **0.3–0.5W extra** (~3–5% battery life). This is a limitation of the workaround approach — when the upstream kernel fix eventually lands, proper power management will be handled automatically and this package will auto-remove itself.
 
 > **Secure Boot Users:** If you have Secure Boot enabled (most laptops do by default), you **must** enroll a Machine Owner Key (MOK) before the driver modules will load. If you've never installed a DKMS or out-of-tree kernel module before, you will need to complete a **one-time MOK enrollment** that involves a reboot and typing a password in a blue setup screen. See the [Secure Boot Setup](#secure-boot-setup) section below — **do this before running the install script**.

@@ -6,14 +6,72 @@
 
 ---
 
+## Quick Install
+
+**No git?** Download, install, and reboot in one step:
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/webcam-fix && ./install.sh && sudo reboot
+```
+
+**Already cloned?**
+
+```bash
+./install.sh
+sudo reboot
+```
+
+To uninstall:
+
+```bash
+./uninstall.sh
+sudo reboot
+```
+
+The webcam works with **Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC**, and most other apps. See [Known App Issues](#known-app-issues) below for Cheese and GNOME Camera.
+
+---
+
+## Known App Issues
+
+### Cheese — Crashes (broken, do not use)
+
+GNOME Cheese crashes with a segfault (`SIGSEGV` in `libgstvideoconvertscale.so`) when receiving frames from the v4l2loopback device. This happens regardless of pixel format (YUY2, I420, NV12, BGRx). It is a bug in Cheese's GStreamer/Clutter rendering pipeline, not a camera driver issue. There is no workaround — Cheese is broken with this camera setup.
+
+### GNOME Camera (snapshot) — May crash on some systems
+
+GNOME Camera may crash on launch (`SIGSEGV` in `gst_video_frame_copy_plane` within `libgstvideofilter.so`). This is caused by a buffer mismatch in snapshot's internal `GstCameraBin` GL video rendering pipeline when it receives frames from the PipeWire V4L2 source node. This crash does **not** affect other apps — they use different video pipelines.
+
+**Workaround** — launch with software GL rendering:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 snapshot
+```
+
+The performance impact is negligible for a camera preview window. The exact root cause is unconfirmed but may be related to Mesa graphics driver version changes.
+
+### What works
+
+The webcam works correctly with: **Firefox**, **Chromium**, **Zoom**, **Microsoft Teams**, **OBS Studio**, **mpv**, **VLC**, and any other app that accesses the camera through V4L2 or PipeWire without using GStreamer's `GstCameraBin` internally.
+
+Quick test:
+
+```bash
+mpv av://v4l2:/dev/video0 --profile=low-latency
+```
+
+---
+
 ## The Problem
 
 The Samsung Galaxy Book4 Ultra's built-in webcam does not work out of the box on Ubuntu 24.04. The webcam uses Intel's IPU6 (Image Processing Unit 6) on Meteor Lake, with an OmniVision OV02C10 sensor connected through Intel's Visual Sensing Controller (IVSC). While the kernel has all the required drivers, **four separate issues** prevent the camera from working:
 
 1. **IVSC kernel modules don't auto-load** — The MEI VSC (Management Engine Interface - Visual Sensing Controller) modules are present in the kernel but never get loaded at boot, breaking the entire camera initialization chain
-2. **Missing userspace camera HAL** — IPU6 outputs raw Bayer sensor data that requires Intel's proprietary camera HAL library to convert into usable video formats (NV12/YUY2)
-3. **v4l2loopback device name mismatch** — The v4l2-relayd relay service can't find the loopback device because the module loads before its configuration is applied
-4. **PipeWire misclassifies the device** — PipeWire's V4L2 SPA plugin classifies v4l2loopback as a video *output* instead of *capture*, preventing portal-based apps (Cheese, GNOME Camera, browser WebRTC) from seeing the webcam
+2. **IVSC/sensor boot race condition** — Even when IVSC modules are loaded via `modules-load.d`, udev probes the OV02C10 sensor via ACPI before IVSC has finished initializing, causing repeated `-EPROBE_DEFER` and leaving the CSI-2 link unstable (intermittent black frames / "Frame sync error")
+3. **Missing userspace camera HAL** — IPU6 outputs raw Bayer sensor data that requires Intel's proprietary camera HAL library to convert into usable video formats
+4. **v4l2loopback device name mismatch** — The v4l2-relayd relay service can't find the loopback device because the module loads before its configuration is applied
+5. **PipeWire misclassifies the device** — With `exclusive_caps=1`, v4l2loopback initially advertises `VIDEO_OUTPUT` until a producer (v4l2-relayd) attaches. WirePlumber discovers the device before the relay connects and never creates a Source node, making the camera invisible to portal-based apps (GNOME Camera, browser WebRTC, Zoom)
+6. **icamerasrc only outputs NV12** — The `icamerasrc` GStreamer element produces NV12 format exclusively, but v4l2-relayd's pipeline expects the input to match the configured output format. Without an explicit `videoconvert` in the input pipeline, GStreamer caps negotiation fails silently and the relay delivers zero frames (black screen)
 
 ## How It Manifests
 
@@ -34,6 +92,14 @@ intel-ipu6 0000:00:05.0: Connected 1 cameras
 ```
 
 But no usable video device appears. `v4l2-ctl --list-devices` only shows a dummy loopback, and no application can find a webcam.
+
+Even after the IVSC modules are loaded via `modules-load.d`, the camera may work intermittently — the first open shows a black frame with the LED lighting briefly, the second attempt works, and then it fails again. In `dmesg`, you'll see:
+
+```
+intel_ipu6_isys.isys intel_ipu6.isys.40: csi2-4 error: Frame sync error
+```
+
+This is caused by the sensor probing before IVSC is fully initialized, leaving the CSI-2 link in an unstable state.
 
 ---
 
@@ -115,7 +181,24 @@ You should see `ivsc_csi`, `ivsc_ace`, `mei_vsc`, and `mei_vsc_hw` in the output
 echo -e "mei-vsc\nmei-vsc-hw\nivsc-ace\nivsc-csi" | sudo tee /etc/modules-load.d/ivsc.conf
 ```
 
-### Step 3: Re-probe the Camera Sensor
+### Step 3: Add IVSC Modules to Initramfs
+
+Loading modules via `modules-load.d` is too late — udev starts probing ACPI devices (including the OV02C10 sensor) before `systemd-modules-load.service` runs, so the sensor hits `-EPROBE_DEFER` repeatedly. Adding the IVSC modules to the initramfs ensures they're loaded before any device probing begins.
+
+```bash
+# Add IVSC modules to initramfs
+for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+    grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null || \
+        echo "$mod" | sudo tee -a /etc/initramfs-tools/modules
+done
+
+# Rebuild initramfs
+sudo update-initramfs -u
+```
+
+After a reboot, `journalctl -b -k | grep ov02c10` should show zero `-517` errors.
+
+### Step 4: Re-probe the Camera Sensor
 
 ```bash
 sudo modprobe -r ov02c10 && sudo modprobe ov02c10
@@ -129,7 +212,7 @@ journalctl -b -k --since "1 minute ago" | grep ov02c10
 
 You should see the sensor register as a media entity (e.g., `entity 367`) with output format `SGRBG10` through a CSI2 port, instead of the `-517` errors.
 
-### Step 4: Install the Camera HAL and Relay Service
+### Step 5: Install the Camera HAL and Relay Service
 
 The IPU6 outputs raw Bayer data. You need Intel's camera HAL to process it into standard video formats, and v4l2-relayd to bridge it to a V4L2 device.
 
@@ -148,7 +231,7 @@ This installs:
 - `v4l2-relayd` — Daemon that bridges icamerasrc to a v4l2loopback device
 - `v4l2loopback` module configuration
 
-### Step 5: Fix the v4l2loopback Device Name
+### Step 6: Fix the v4l2loopback Device Name
 
 The v4l2loopback module may have loaded before the modprobe config was installed, resulting in a "Dummy video device" name instead of "Intel MIPI Camera". The v4l2-relayd service looks up the device by name, so this mismatch causes it to fail.
 
@@ -168,32 +251,36 @@ The modprobe config file (installed by the v4l2-relayd package) at `/etc/modprob
 options v4l2loopback devices=1 exclusive_caps=1 card_label="Intel MIPI Camera"
 ```
 
-### Step 6: Configure and Start v4l2-relayd
+### Step 7: Configure and Start v4l2-relayd
 
-The v4l2-relayd package creates a default config at `/etc/default/v4l2-relayd` with a test source. The IPU6-specific config needs to override it:
+The v4l2-relayd package creates a default config at `/etc/default/v4l2-relayd` with a test source. The `v4l2-relayd@default` service also reads instance overrides from `/etc/v4l2-relayd.d/default.conf`, which takes priority:
 
 ```bash
 # Create/verify the IPU6 override config
-cat /etc/v4l2-relayd
+sudo mkdir -p /etc/v4l2-relayd.d
+cat /etc/v4l2-relayd.d/default.conf
 ```
 
 It should contain:
 
 ```
-VIDEOSRC=icamerasrc buffer-count=7
-FORMAT=NV12
+VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
+FORMAT=YUY2
 WIDTH=1280
 HEIGHT=720
 FRAMERATE=30/1
 CARD_LABEL=Intel MIPI Camera
 ```
 
+> **Why `videoconvert` in VIDEOSRC?** The `icamerasrc` GStreamer element only outputs NV12 format. The v4l2-relayd service constructs its pipeline with `appsrc caps=...format=YUY2...`, which expects the input side to already be in YUY2. Without `videoconvert` in the input pipeline, GStreamer caps negotiation fails silently — the relay appears to run but delivers zero frames to the loopback device (black screen in apps). The `videoconvert` element converts NV12→YUY2 before frames reach the appsrc.
+
 If this file doesn't exist or has different content, create it:
 
 ```bash
-sudo tee /etc/v4l2-relayd << 'EOF'
-VIDEOSRC=icamerasrc buffer-count=7
-FORMAT=NV12
+sudo mkdir -p /etc/v4l2-relayd.d
+sudo tee /etc/v4l2-relayd.d/default.conf << 'EOF'
+VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
+FORMAT=YUY2
 WIDTH=1280
 HEIGHT=720
 FRAMERATE=30/1
@@ -211,35 +298,46 @@ systemctl status v4l2-relayd
 
 The service should show `active (running)` and stay running. You should see the webcam's blue LED turn on.
 
-### Step 7: Fix PipeWire Device Classification
+### Step 8: Harden v4l2-relayd Service
 
-PipeWire's V4L2 SPA plugin incorrectly classifies v4l2loopback devices as video *output* rather than *capture*, even when `exclusive_caps=1` is set. This prevents camera apps that use PipeWire/portals (GNOME Camera, Cheese, etc.) from seeing the webcam. Without this fix, `wpctl status` will show the camera under Video > Devices but **not** under Video > Sources, meaning no app can access it through the camera portal.
-
-A WirePlumber rule overrides this:
+Even with the initramfs fix, the first CSI stream after boot can occasionally fail. A systemd override auto-restarts on failure and re-triggers WirePlumber to pick up the loopback device correctly:
 
 ```bash
-sudo mkdir -p /etc/wireplumber/wireplumber.conf.d
+sudo mkdir -p /etc/systemd/system/v4l2-relayd@default.service.d
+sudo tee /etc/systemd/system/v4l2-relayd@default.service.d/override.conf << 'EOF'
+[Unit]
+# Rate-limit restarts: max 10 attempts in 60 seconds
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
-sudo tee /etc/wireplumber/wireplumber.conf.d/50-v4l2-ipu6-camera.conf << 'EOF'
-monitor.v4l2.rules = [
-  {
-    matches = [
-      {
-        api.v4l2.cap.card = "Intel MIPI Camera"
-      }
-    ]
-    actions = {
-      update-props = {
-        device.capabilities = ":video_capture:"
-      }
-    }
-  }
-]
+[Service]
+# After the relay connects, re-trigger udev on the loopback device and
+# restart the user's WirePlumber so it re-discovers the device as
+# VIDEO_CAPTURE (v4l2loopback with exclusive_caps=1 only advertises
+# capture once a producer is attached).
+ExecStartPost=/bin/sh -c 'sleep 2; udevadm trigger --action=change /dev/video0 2>/dev/null; sleep 1; for uid in $(loginctl list-users --no-legend 2>/dev/null | awk "{print \\$1}"); do su - "#$uid" -c "systemctl --user restart wireplumber" 2>/dev/null || true; done'
+
+# Fast auto-restart on failure (covers transient CSI frame sync errors).
+Restart=always
+RestartSec=2
 EOF
-
-# Restart WirePlumber to apply
-systemctl --user restart wireplumber
+sudo systemctl daemon-reload
 ```
+
+> **Important:** `StartLimitIntervalSec` and `StartLimitBurst` must be in the `[Unit]` section, not `[Service]`. systemd silently ignores them if placed in `[Service]`.
+
+This ensures the relay auto-recovers from transient CSI errors, and the ExecStartPost udev trigger + WirePlumber restart handles the device classification timing issue (see Step 9).
+
+### Step 9: Fix PipeWire Device Classification
+
+With `exclusive_caps=1`, v4l2loopback only advertises `VIDEO_CAPTURE` capability **after** a producer (v4l2-relayd) attaches. Before that, it shows `VIDEO_OUTPUT`. WirePlumber discovers the device at boot before the relay connects, sees it as an output device, and never creates a Source node — making the camera invisible to portal-based apps (GNOME Camera, browsers, Zoom, etc.).
+
+> **Note:** `device.capabilities` is **read-only** in PipeWire — it's set by the kernel V4L2 ioctl. WirePlumber rules cannot override it. The only fix is to make WirePlumber re-discover the device after the relay attaches.
+
+This is handled automatically by the `ExecStartPost` in Step 8, which:
+1. Waits 2 seconds for the relay to attach to the loopback device
+2. Triggers a udev `change` event on `/dev/video0` (makes the kernel re-report capabilities)
+3. Restarts WirePlumber so it re-queries the device and sees `VIDEO_CAPTURE`
 
 Verify a Source node appeared:
 
@@ -253,9 +351,9 @@ You should see the camera listed under **Sources**:
  │  *   47. Intel MIPI Camera (V4L2)
 ```
 
-Without this step, only apps that directly open `/dev/video0` via V4L2 (mpv, ffmpeg, OBS) will work. Portal-based apps (Cheese, GNOME Camera, browser WebRTC) will not see any camera.
+Without the ExecStartPost fix, only apps that directly open `/dev/video0` via V4L2 (mpv, ffmpeg, OBS) will work. Portal-based apps (GNOME Camera, browser WebRTC) will not see any camera.
 
-### Step 8: Verify
+### Step 10: Verify
 
 ```bash
 # Capture a test frame
@@ -269,35 +367,20 @@ file /tmp/webcam_test.jpg
 mpv av://v4l2:/dev/video0 --profile=low-latency
 ```
 
-The webcam should now appear as **"Intel MIPI Camera"** in any V4L2-compatible application: Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC, etc.
-
-> **Note:** The GNOME Snapshot app (`snapshot`) may segfault on KDE Plasma — this is a Snapshot/GTK4 bug, not a camera issue. Use Cheese, Firefox, Chromium, or other apps instead.
+The webcam should now appear as **"Intel MIPI Camera"** in any V4L2-compatible application: Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC, etc. See [Known App Issues](#known-app-issues) at the top of this document for Cheese and GNOME Camera compatibility.
 
 ---
 
-## Quick Setup Script
+## Configuration Files
 
-A complete automated script (`install.sh`) is provided alongside this guide. It performs all 8 steps with hardware verification, error handling, and validation.
-
-```bash
-./install.sh
-```
-
-The script creates these persistent configuration files:
+The install script creates these persistent configuration files:
 - `/etc/modules-load.d/ivsc.conf` — IVSC module auto-loading
-- `/etc/v4l2-relayd` — Camera HAL relay configuration
-- `/etc/wireplumber/wireplumber.conf.d/50-v4l2-ipu6-camera.conf` — PipeWire device classification fix
-
-### Uninstall
-
-To reverse everything the fix script did:
-
-```bash
-./uninstall.sh
-sudo reboot
-```
-
-This removes the config files, the camera HAL and relay packages, and the Intel IPU6 PPA.
+- `/etc/modprobe.d/ivsc-camera.conf` — Module soft-dependency (IVSC loads before sensor)
+- `/etc/modprobe.d/v4l2loopback.conf` — v4l2loopback device configuration
+- `/etc/v4l2-relayd.d/default.conf` — Camera HAL relay configuration
+- `/etc/udev/rules.d/90-hide-ipu6-v4l2.rules` — Hides raw IPU6 nodes from applications
+- `/etc/initramfs-tools/modules` — IVSC module entries (loads before udev sensor probe)
+- `/etc/systemd/system/v4l2-relayd@default.service.d/override.conf` — Auto-restart and WirePlumber re-trigger
 
 ---
 
@@ -305,7 +388,31 @@ This removes the config files, the camera HAL and relay packages, and the Intel 
 
 ### Sensor still fails after loading IVSC modules
 
-If `journalctl -b -k | grep ov02c10` still shows `-517` errors, try a full reboot. The module load order matters and some dependencies resolve better during a clean boot.
+If `journalctl -b -k | grep ov02c10` still shows `-517` errors after reboot, verify the IVSC modules are in the initramfs:
+
+```bash
+lsinitramfs /boot/initrd.img-$(uname -r) | grep -E "ivsc|mei.vsc"
+```
+
+If they're missing, add them and rebuild:
+
+```bash
+for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+    echo "$mod" | sudo tee -a /etc/initramfs-tools/modules
+done
+sudo update-initramfs -u
+sudo reboot
+```
+
+### Intermittent black frames / "Frame sync error"
+
+If `dmesg` shows `csi2-4 error: Frame sync error`, the CSI-2 link between the sensor and IPU6 is unstable. This is usually caused by the sensor probing before IVSC is ready (the initramfs fix above resolves this). As a workaround, restarting the relay service re-probes the sensor:
+
+```bash
+sudo systemctl restart v4l2-relayd@default
+```
+
+The install script configures `Restart=always` on the service so it auto-recovers from transient CSI errors.
 
 ### v4l2-relayd crashes immediately
 
@@ -318,7 +425,8 @@ journalctl -u v4l2-relayd --no-pager | tail -20
 Common causes:
 - **`device=/dev/""`** — v4l2loopback name mismatch. Reload with `sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback devices=1 exclusive_caps=1 card_label="Intel MIPI Camera"`
 - **`gst_element_set_state: assertion 'GST_IS_ELEMENT' failed`** — icamerasrc can't connect to the camera. Verify IVSC modules are loaded: `lsmod | grep ivsc`
-- **`failed to config stream for format NV12 1920x1080`** — Wrong resolution. Ensure `/etc/v4l2-relayd` specifies 1280x720, not 1920x1080
+- **`failed to config stream for format NV12 1920x1080`** — Wrong resolution. Ensure `/etc/v4l2-relayd.d/default.conf` specifies 1280x720, not 1920x1080
+- **Black screen (relay running, no frames)** — Missing `videoconvert` in VIDEOSRC. Ensure the config has `VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert`. The `icamerasrc` element only produces NV12; without `videoconvert`, the caps negotiation to YUY2 fails silently.
 
 ### No `/dev/video0` device
 

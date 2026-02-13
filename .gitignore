@@ -1,6 +1,21 @@
 # Build artifacts
-webcam-fix/.swarm/
-webcam-fix/ruvector.db
 *.db
 *.db-shm
 *.db-wal
+
+# Claude Code / claude-flow
+.claude/
+.claude-flow/
+.claude-flow-hooks/
+.claude-flow-backup/
+.hive-mind/
+.swarm/
+CLAUDE.md
+
+# Node.js (claude-flow dependencies)
+node_modules/
+package.json
+package-lock.json
+
+# Misc artifacts
+cap_%d

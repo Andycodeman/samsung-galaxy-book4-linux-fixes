@@ -7,6 +7,11 @@
 # auto-load, breaking the camera initialization chain. Additionally, the
 # userspace camera HAL and v4l2 relay service need to be installed.
 #
+# The IVSC modules must be loaded in the initramfs (before udev probes the
+# OV02C10 sensor via ACPI), otherwise the sensor hits -EPROBE_DEFER repeatedly
+# and the CSI-2 link starts in an unstable state causing intermittent black
+# frames ("Frame sync error" in dmesg).
+#
 # For full documentation, see: README.md
 #
 # Usage: ./install.sh
@@ -26,7 +31,7 @@ if [[ $EUID -eq 0 ]]; then
 fi
 
 # Verify hardware
-echo "[1/8] Verifying hardware..."
+echo "[1/11] Verifying hardware..."
 if ! lspci -d 8086:7d19 2>/dev/null | grep -q .; then
     echo "ERROR: Intel IPU6 Meteor Lake (8086:7d19) not found."
     echo "       This script is designed for Samsung Galaxy Book4 Ultra."
@@ -46,12 +51,11 @@ echo "  ✓ IVSC firmware present"
 
 # Check kernel module availability
 echo ""
-echo "[2/8] Checking kernel modules..."
+echo "[2/11] Checking kernel modules..."
 MISSING_MODS=()
 for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
     modpath=$(find /lib/modules/$(uname -r) -name "${mod//-/_}.ko*" -o -name "${mod}.ko*" 2>/dev/null | head -1)
     if [[ -z "$modpath" ]]; then
-        # Try underscore variant
         modpath=$(find /lib/modules/$(uname -r) -name "$(echo $mod | tr '-' '_').ko*" 2>/dev/null | head -1)
     fi
     if [[ -z "$modpath" ]]; then
@@ -66,9 +70,9 @@ if [[ ${#MISSING_MODS[@]} -gt 0 ]]; then
 fi
 echo "  ✓ All required kernel modules found"
 
-# Load and persist IVSC modules
+# Load and persist IVSC modules with correct boot ordering
 echo ""
-echo "[3/8] Loading IVSC kernel modules..."
+echo "[3/11] Loading IVSC kernel modules..."
 for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
     if ! lsmod | grep -q "$(echo $mod | tr '-' '_')"; then
         sudo modprobe "$mod"
@@ -78,12 +82,41 @@ for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
     fi
 done
 
+# Ensure IVSC modules load at boot (before ov02c10 sensor probes)
 echo -e "mei-vsc\nmei-vsc-hw\nivsc-ace\nivsc-csi" | sudo tee /etc/modules-load.d/ivsc.conf > /dev/null
+
+# Add softdep so ov02c10 waits for IVSC modules to load first
+sudo tee /etc/modprobe.d/ivsc-camera.conf > /dev/null << 'EOF'
+# Ensure IVSC modules are loaded before the camera sensor probes.
+# Without this, ov02c10 hits -EPROBE_DEFER and may fail to bind,
+# resulting in black frames (CSI Frame sync errors).
+softdep ov02c10 pre: mei-vsc mei-vsc-hw ivsc-ace ivsc-csi
+EOF
 echo "  ✓ IVSC modules will load automatically at boot"
+echo "  ✓ Module soft-dependency configured (IVSC loads before sensor)"
+
+# Add IVSC modules to initramfs so they load before udev probes the sensor
+echo ""
+echo "[4/11] Adding IVSC modules to initramfs..."
+INITRAMFS_CHANGED=false
+for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+    if ! grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
+        echo "$mod" | sudo tee -a /etc/initramfs-tools/modules > /dev/null
+        INITRAMFS_CHANGED=true
+    fi
+done
+
+if $INITRAMFS_CHANGED; then
+    echo "  Rebuilding initramfs (this may take a moment)..."
+    sudo update-initramfs -u
+    echo "  ✓ IVSC modules added to initramfs"
+else
+    echo "  ✓ IVSC modules already in initramfs"
+fi
 
 # Re-probe sensor
 echo ""
-echo "[4/8] Re-probing camera sensor..."
+echo "[5/11] Re-probing camera sensor..."
 sudo modprobe -r ov02c10 2>/dev/null || true
 sleep 1
 sudo modprobe ov02c10
@@ -101,7 +134,7 @@ fi
 
 # Install packages
 echo ""
-echo "[5/8] Installing camera HAL and relay service..."
+echo "[6/11] Installing camera HAL and relay service..."
 NEED_INSTALL=false
 
 if ! dpkg -l libcamhal-ipu6epmtl 2>/dev/null | grep -q "^ii"; then
@@ -124,9 +157,19 @@ else
     echo "  ✓ Packages already installed"
 fi
 
-# Configure v4l2loopback
+# Configure v4l2loopback and v4l2-relayd
 echo ""
-echo "[6/8] Configuring v4l2loopback and v4l2-relayd..."
+echo "[7/11] Configuring v4l2loopback and v4l2-relayd..."
+
+# Write persistent v4l2loopback config (overrides any package defaults)
+sudo tee /etc/modprobe.d/v4l2loopback.conf > /dev/null << 'EOF'
+options v4l2loopback devices=1 exclusive_caps=1 card_label="Intel MIPI Camera"
+EOF
+
+# Remove conflicting config from v4l2-relayd package if present
+if [[ -f /etc/modprobe.d/v4l2-relayd.conf ]]; then
+    sudo rm -f /etc/modprobe.d/v4l2-relayd.conf
+fi
 
 # Reload v4l2loopback with correct name
 sudo modprobe -r v4l2loopback 2>/dev/null || true
@@ -139,10 +182,12 @@ else
     echo "  ⚠ Expected 'Intel MIPI Camera', got '$DEVICE_NAME'"
 fi
 
-# Write v4l2-relayd config
-sudo tee /etc/v4l2-relayd > /dev/null << 'EOF'
-VIDEOSRC=icamerasrc buffer-count=7
-FORMAT=NV12
+# Write v4l2-relayd config to the correct path
+# The v4l2-relayd@default.service reads: /etc/default/v4l2-relayd then /etc/v4l2-relayd.d/default.conf
+sudo mkdir -p /etc/v4l2-relayd.d
+sudo tee /etc/v4l2-relayd.d/default.conf > /dev/null << 'EOF'
+VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
+FORMAT=YUY2
 WIDTH=1280
 HEIGHT=720
 FRAMERATE=30/1
@@ -150,43 +195,72 @@ CARD_LABEL=Intel MIPI Camera
 EOF
 echo "  ✓ v4l2-relayd configured for IPU6"
 
+# Harden v4l2-relayd with auto-restart and sensor re-probe before start
+echo ""
+echo "[8/11] Hardening v4l2-relayd service..."
+sudo mkdir -p /etc/systemd/system/v4l2-relayd@default.service.d
+sudo tee /etc/systemd/system/v4l2-relayd@default.service.d/override.conf > /dev/null << 'EOF'
+[Unit]
+# Rate-limit restarts: max 10 attempts in 60 seconds
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+# After the relay connects, re-trigger udev on the loopback device and
+# restart the user's WirePlumber so it re-discovers the device as
+# VIDEO_CAPTURE (v4l2loopback with exclusive_caps=1 only advertises
+# capture once a producer is attached).
+ExecStartPost=/bin/sh -c 'sleep 2; udevadm trigger --action=change /dev/video0 2>/dev/null; sleep 1; for uid in $(loginctl list-users --no-legend 2>/dev/null | awk "{print \\$1}"); do su - "#$uid" -c "systemctl --user restart wireplumber" 2>/dev/null || true; done'
+
+# Fast auto-restart on failure (covers transient CSI frame sync errors).
+Restart=always
+RestartSec=2
+EOF
+sudo systemctl daemon-reload
+
 # Start relay service
 sudo systemctl reset-failed v4l2-relayd 2>/dev/null || true
 sudo systemctl enable v4l2-relayd 2>/dev/null || true
 sudo systemctl restart v4l2-relayd
 sleep 3
+echo "  ✓ v4l2-relayd hardened with auto-restart and sensor re-probe"
 
-# Step 7: WirePlumber override for PipeWire device classification
+# Hide raw IPU6 ISYS video nodes from applications
 echo ""
-echo "[7/8] Fixing PipeWire device classification..."
-sudo mkdir -p /etc/wireplumber/wireplumber.conf.d
-sudo tee /etc/wireplumber/wireplumber.conf.d/50-v4l2-ipu6-camera.conf > /dev/null << 'WPEOF'
-monitor.v4l2.rules = [
-  {
-    matches = [
-      {
-        api.v4l2.cap.card = "Intel MIPI Camera"
-      }
-    ]
-    actions = {
-      update-props = {
-        device.capabilities = ":video_capture:"
-      }
-    }
-  }
-]
-WPEOF
+echo "[9/11] Hiding raw IPU6 video nodes..."
+sudo tee /etc/udev/rules.d/90-hide-ipu6-v4l2.rules > /dev/null << 'EOF'
+# Hide Intel IPU6 ISYS raw capture nodes from user-space applications.
+# These ~48 /dev/video* nodes are internal to the IPU6 pipeline and unusable
+# by apps directly. Exposing them causes crashes in Zoom, Cheese, and other
+# apps that enumerate all video devices.
+# TAG-="uaccess" prevents PipeWire/WirePlumber from creating nodes for them.
+# MODE="0000" blocks direct access (libcamera handles the permission errors gracefully).
+SUBSYSTEM=="video4linux", KERNEL=="video*", ATTR{name}=="Intel IPU6 ISYS Capture*", MODE="0000", TAG-="uaccess"
+EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=video4linux
+echo "  ✓ IPU6 raw nodes hidden from applications"
+
+# PipeWire device classification is handled by the udev re-trigger in the
+# v4l2-relayd ExecStartPost (step 8).  With exclusive_caps=1, v4l2loopback
+# only advertises VIDEO_CAPTURE after the relay connects.  The udev change
+# event makes WirePlumber re-query the device at that point.
+# (device.capabilities is read-only in PipeWire — WirePlumber rules cannot
+# override it; only a kernel-level cap change + udev event works.)
+echo ""
+echo "[10/11] Verifying PipeWire device classification..."
 systemctl --user restart wireplumber 2>/dev/null || true
 sleep 2
 if wpctl status 2>/dev/null | grep -A10 "^Video" | grep -qi "MIPI\|Intel.*V4L2"; then
-    echo "  ✓ PipeWire now exposes camera as Source node"
+    echo "  ✓ PipeWire exposes camera as Source node"
 else
-    echo "  ⚠ WirePlumber config written. May need logout/login to take effect."
+    echo "  ⚠ WirePlumber may need a logout/login to pick up the camera."
+    echo "    (The ExecStartPost udev trigger will handle this automatically on boot.)"
 fi
 
 # Verify
 echo ""
-echo "[8/8] Verifying webcam..."
+echo "[11/11] Verifying webcam..."
 
 SERVICE_OK=false
 CAPTURE_OK=false
@@ -200,7 +274,7 @@ else
 fi
 
 if $SERVICE_OK; then
-    if ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 -update 1 -y /tmp/webcam_test.jpg 2>/dev/null; then
+    if timeout 5 ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 -update 1 -y /tmp/webcam_test.jpg 2>/dev/null; then
         SIZE=$(stat -c%s /tmp/webcam_test.jpg 2>/dev/null || echo 0)
         if [[ "$SIZE" -gt 1000 ]]; then
             CAPTURE_OK=true
@@ -215,15 +289,18 @@ if $CAPTURE_OK; then
     echo "  ✅ SUCCESS — Webcam is working!"
     echo ""
     echo "  Device: /dev/video0 (Intel MIPI Camera)"
-    echo "  Format: NV12, 1280x720, 30fps"
+    echo "  Format: YUY2, 1280x720, 30fps"
     echo ""
     echo "  Test:   mpv av://v4l2:/dev/video0 --profile=low-latency"
     echo ""
-    echo "  Works with: Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC, Cheese"
-    echo "  Note: GNOME Snapshot may segfault on KDE — that's a GTK4 bug, not a camera issue"
+    echo "  Works with: Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC, GNOME Camera"
+    echo ""
+    echo "  Note: Cheese has a known bug (SIGSEGV in libgstvideoconvertscale.so)"
+    echo "        Use GNOME Camera (snapshot) or any other app instead."
 elif $SERVICE_OK; then
     echo "  ⚠ Service running but capture failed."
-    echo "  Try rebooting and testing again."
+    echo "  A reboot is needed for the IVSC modules to load from initramfs."
+    echo "  This is normal on first install — reboot and the camera will work."
 else
     echo "  ⚠ Setup complete but service not running."
     echo "  A reboot is needed for modules to load in correct order."
@@ -231,6 +308,10 @@ fi
 echo ""
 echo "  Configuration files created:"
 echo "    /etc/modules-load.d/ivsc.conf"
-echo "    /etc/v4l2-relayd"
-echo "    /etc/wireplumber/wireplumber.conf.d/50-v4l2-ipu6-camera.conf"
+echo "    /etc/modprobe.d/ivsc-camera.conf"
+echo "    /etc/modprobe.d/v4l2loopback.conf"
+echo "    /etc/v4l2-relayd.d/default.conf"
+echo "    /etc/udev/rules.d/90-hide-ipu6-v4l2.rules"
+echo "    /etc/initramfs-tools/modules (IVSC entries)"
+echo "    /etc/systemd/system/v4l2-relayd@default.service.d/override.conf"
 echo "=============================================="

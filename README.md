@@ -4,7 +4,31 @@ Fixes for hardware that doesn't work out of the box on Linux (Ubuntu 24.04+) on 
 
 > **Disclaimer:** These fixes involve loading kernel modules and running scripts with root privileges. While they are designed to be safe and reversible (both include uninstall steps), they are provided **as-is with no warranty**. Modifying kernel modules carries inherent risk — in rare cases, incompatible drivers could cause boot issues or system instability. **Use at your own risk.** It is recommended to have a recent backup and know how to access recovery mode before proceeding.
 
-## Fixes
+## Quick Install
+
+Each fix can be downloaded and installed in a single command — no git required.
+
+### Speaker Fix (no sound from built-in speakers)
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/speaker-fix && sudo ./install.sh && sudo reboot
+```
+
+To uninstall: `sudo ./uninstall.sh && sudo reboot`
+
+### Webcam Fix (built-in camera not detected)
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/webcam-fix && ./install.sh && sudo reboot
+```
+
+To uninstall: `./uninstall.sh && sudo reboot`
+
+The webcam works with **Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC**, and most other apps. See [webcam known app issues](webcam-fix/README.md#known-app-issues) for Cheese and GNOME Camera compatibility.
+
+---
+
+## What's Included
 
 ### [Speaker Fix](speaker-fix/) — MAX98390 HDA Driver (DKMS)
 
@@ -19,20 +43,9 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 > **Secure Boot:** Most laptops have Secure Boot enabled. If you've never installed a DKMS/out-of-tree kernel module before, you'll need to do a **one-time MOK key enrollment** (reboot + blue screen + password) before the modules will load. See the [full walkthrough](speaker-fix/README.md#secure-boot-setup).
 
-```bash
-cd speaker-fix
-sudo ./install.sh
-sudo reboot
-```
-
 ### [Webcam Fix](webcam-fix/) — Intel IPU6 / OV02C10
 
-The built-in webcam uses Intel IPU6 (Meteor Lake) with an OmniVision OV02C10 sensor. Four separate issues prevent it from working: IVSC modules don't auto-load, missing camera HAL, v4l2loopback name mismatch, and PipeWire device misclassification.
-
-```bash
-cd webcam-fix
-./install.sh
-```
+The built-in webcam uses Intel IPU6 (Meteor Lake) with an OmniVision OV02C10 sensor. Five separate issues prevent it from working reliably: IVSC modules don't auto-load, IVSC/sensor boot race condition causing intermittent black frames, missing camera HAL, v4l2loopback name mismatch, and PipeWire device misclassification. The fix includes adding IVSC modules to the initramfs (eliminating the boot race) and hardening the relay service with auto-restart.
 
 ## Tested On
 
