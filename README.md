@@ -45,6 +45,8 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 > **Secure Boot:** Most laptops have Secure Boot enabled. If you've never installed a DKMS/out-of-tree kernel module before, you'll need to do a **one-time MOK key enrollment** (reboot + blue screen + password) before the modules will load. See the [full walkthrough](speaker-fix/README.md#secure-boot-setup).
 
+> **Fedora / DNF-based distros:** The install script auto-detects Fedora and configures DKMS module signing using the akmods MOK key (`/etc/pki/akmods/`). If no key exists, it generates one with `kmodgenca` and prompts for enrollment. Confirmed working on Fedora 43, kernel 6.18.9 (Galaxy Book4 Ultra).
+
 ### [Webcam Fix](webcam-fix/) — Intel IPU6 / OV02C10
 
 The built-in webcam uses Intel IPU6 (Meteor Lake) with an OmniVision OV02C10 sensor. Five separate issues prevent it from working reliably: IVSC modules don't auto-load, IVSC/sensor boot race condition causing intermittent black frames, missing camera HAL, v4l2loopback name mismatch, and PipeWire device misclassification. The fix includes adding IVSC modules to the initramfs (eliminating the boot race) and hardening the relay service with auto-restart.
@@ -70,9 +72,10 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 ## Tested On
 
-- **Samsung Galaxy Book4 Ultra** — Ubuntu 24.04 LTS, Kernel 6.17.0-14-generic (HWE)
+- **Samsung Galaxy Book4 Ultra** — Ubuntu 24.04 LTS, kernel 6.17.0-14-generic (HWE)
+- **Samsung Galaxy Book4 Ultra** — Fedora 43, kernel 6.18.9 (community-confirmed)
 
-The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, Pro 360, and Book4 Pro 16-inch by other users, so this fix should work on those models too — but it has only been directly tested on the Ultra. If you try it on another model, please report back.
+The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, Pro 360, and Book4 Pro 16-inch by other users, so this fix should work on those models too. If you try it on another model or distro, please report back.
 
 ## Hardware
 

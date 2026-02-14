@@ -18,19 +18,40 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Detect package manager
+if command -v dnf >/dev/null 2>&1; then
+    PKG_MGR="dnf"
+    PKG_INSTALL="dnf install -y"
+elif command -v apt-get >/dev/null 2>&1; then
+    PKG_MGR="apt"
+    PKG_INSTALL="apt-get install -y"
+else
+    PKG_MGR="unknown"
+    PKG_INSTALL=""
+fi
+
 # Check prerequisites
 if ! command -v dkms >/dev/null 2>&1; then
-    echo "ERROR: dkms not installed. Run: sudo apt install dkms" >&2
+    if [ "$PKG_MGR" = "dnf" ]; then
+        echo "ERROR: dkms not installed. Run: sudo dnf install dkms" >&2
+    else
+        echo "ERROR: dkms not installed. Run: sudo apt install dkms" >&2
+    fi
     exit 1
 fi
 
 # i2c-tools is needed for dynamic amp detection on boot
 if ! command -v i2cget >/dev/null 2>&1; then
     echo "Installing i2c-tools (needed for amplifier detection)..."
-    apt-get install -y i2c-tools >/dev/null 2>&1 || {
-        echo "ERROR: Failed to install i2c-tools. Run: sudo apt install i2c-tools" >&2
+    if [ -n "$PKG_INSTALL" ]; then
+        $PKG_INSTALL i2c-tools >/dev/null 2>&1 || {
+            echo "ERROR: Failed to install i2c-tools. Install manually: i2c-tools" >&2
+            exit 1
+        }
+    else
+        echo "ERROR: i2c-tools not installed. Please install it manually." >&2
         exit 1
-    }
+    fi
 fi
 
 # Check hardware: MAX98390 must be present via ACPI
@@ -61,6 +82,42 @@ mkdir -p "${SRC_DIR}/src"
 cp -a "$(dirname "$0")/src/"*.{c,h} "${SRC_DIR}/src/"
 cp -a "$(dirname "$0")/src/Makefile" "${SRC_DIR}/src/"
 cp -a "$(dirname "$0")/dkms.conf" "${SRC_DIR}/"
+
+# On Fedora with Secure Boot, configure DKMS to use the akmods MOK key for signing
+if [ "$PKG_MGR" = "dnf" ] && mokutil --sb-state 2>/dev/null | grep -q "SecureBoot enabled"; then
+    MOK_KEY="/etc/pki/akmods/private/private_key.priv"
+    MOK_CERT="/etc/pki/akmods/certs/public_key.der"
+
+    if [ ! -f "$MOK_KEY" ] || [ ! -f "$MOK_CERT" ]; then
+        echo "Generating MOK key for Secure Boot module signing..."
+        $PKG_INSTALL kmodtool akmods mokutil openssl >/dev/null 2>&1 || true
+        kmodgenca -a 2>/dev/null || true
+    fi
+
+    if [ -f "$MOK_KEY" ] && [ -f "$MOK_CERT" ]; then
+        echo "Configuring DKMS to sign modules with Fedora akmods MOK key..."
+        mkdir -p /etc/dkms
+        # Add signing config if not already present
+        if ! grep -q "mok_signing_key" /etc/dkms/framework.conf 2>/dev/null; then
+            cat >> /etc/dkms/framework.conf << SIGNEOF
+
+# Added by max98390-hda installer for Secure Boot module signing
+mok_signing_key=${MOK_KEY}
+mok_certificate=${MOK_CERT}
+SIGNEOF
+        fi
+
+        # Check if the key is already enrolled
+        if ! mokutil --test-key "$MOK_CERT" 2>/dev/null | grep -q "is already enrolled"; then
+            echo ""
+            echo ">>> Secure Boot: You need to enroll the MOK key. <<<"
+            echo ">>> Run: sudo mokutil --import ${MOK_CERT}        <<<"
+            echo ">>> Then reboot and follow the MOK enrollment prompt. <<<"
+            echo ""
+            mokutil --import "$MOK_CERT" 2>/dev/null || true
+        fi
+    fi
+fi
 
 # Register, build, and install with DKMS
 echo "Building DKMS module..."
