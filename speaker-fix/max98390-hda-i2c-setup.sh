@@ -10,21 +10,40 @@ ALL_ADDRS="0x38 0x39 0x3c 0x3d"
 
 # Find the I2C adapter that has the ACPI MAX98390 device
 find_i2c_bus() {
-    local acpi_link bus_path
-    for dev in /sys/bus/i2c/devices/i2c-MAX98390:00 /sys/bus/i2c/devices/*-MAX98390:00; do
+    local dev_path parent_name bus_num
+    for dev in /sys/bus/i2c/devices/*MAX98390*; do
         [ -e "$dev" ] || continue
-        # Follow the device to find its parent adapter
-        bus_path="$(readlink -f "$dev/..")"
-        # Extract adapter number from path (e.g., "i2c-2" -> "2")
-        basename "$bus_path" | sed -n 's/^i2c-//p'
-        return 0
+        dev_path="$(readlink -f "$dev")"
+        # Try parent directory basename (handles .../i2c-N/device)
+        parent_name="$(basename "$(dirname "$dev_path")")"
+        bus_num="$(echo "$parent_name" | sed -n 's/^i2c-\([0-9]\+\)$/\1/p')"
+        if [ -n "$bus_num" ]; then
+            echo "$bus_num"
+            return 0
+        fi
+        # Fallback: extract bus number from anywhere in the resolved path
+        # Matches the last /i2c-N/ component before the device itself
+        bus_num="$(echo "$dev_path" | sed -n 's|.*/i2c-\([0-9]\+\)/.*|\1|p')"
+        if [ -n "$bus_num" ]; then
+            echo "$bus_num"
+            return 0
+        fi
     done
     # Fallback: search ACPI for the I2C controller hosting MAX98390
-    for acpi in /sys/bus/acpi/devices/MAX98390:00; do
+    for acpi in /sys/bus/acpi/devices/MAX98390:*; do
         [ -e "$acpi/physical_node" ] || continue
-        bus_path="$(readlink -f "$acpi/physical_node/..")"
-        basename "$bus_path" | sed -n 's/^i2c-//p'
-        return 0
+        dev_path="$(readlink -f "$acpi/physical_node")"
+        parent_name="$(basename "$(dirname "$dev_path")")"
+        bus_num="$(echo "$parent_name" | sed -n 's/^i2c-\([0-9]\+\)$/\1/p')"
+        if [ -n "$bus_num" ]; then
+            echo "$bus_num"
+            return 0
+        fi
+        bus_num="$(echo "$dev_path" | sed -n 's|.*/i2c-\([0-9]\+\)/.*|\1|p')"
+        if [ -n "$bus_num" ]; then
+            echo "$bus_num"
+            return 0
+        fi
     done
     return 1
 }
