@@ -10,7 +10,7 @@ Each fix can be downloaded and installed in a single command — no git required
 
 ### Speaker Fix (no sound from built-in speakers)
 
-> **Microphone warning:** This fix uses the legacy HDA audio driver, which does not support the built-in digital microphones (DMIC). On some models (e.g., Galaxy Book5 Pro 360 on Lunar Lake), the DMIC may already work under the default SOF driver — installing this speaker fix will disable it. If your internal mic currently works, you will lose it. See [Microphone Status](#microphone-status) for details.
+> **Microphone note (Book4 models):** On Galaxy Book4 (Meteor Lake), the built-in DMIC does not work with or without this fix — no mic functionality is lost. On **Galaxy Book5** (Lunar Lake), the speaker fix works and the **built-in mic continues to work** after installation. See [Microphone Status](#microphone-status) for details.
 
 ```bash
 curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/speaker-fix && sudo ./install.sh && sudo reboot
