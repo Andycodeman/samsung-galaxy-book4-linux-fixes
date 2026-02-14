@@ -24,6 +24,15 @@ if ! command -v dkms >/dev/null 2>&1; then
     exit 1
 fi
 
+# i2c-tools is needed for dynamic amp detection on boot
+if ! command -v i2cget >/dev/null 2>&1; then
+    echo "Installing i2c-tools (needed for amplifier detection)..."
+    apt-get install -y i2c-tools >/dev/null 2>&1 || {
+        echo "ERROR: Failed to install i2c-tools. Run: sudo apt install i2c-tools" >&2
+        exit 1
+    }
+fi
+
 # Check hardware: MAX98390 must be present via ACPI
 if ! ls /sys/bus/acpi/devices/MAX98390:* &>/dev/null && \
    ! grep -rq "MAX98390" /sys/bus/i2c/devices/*/name 2>/dev/null; then
