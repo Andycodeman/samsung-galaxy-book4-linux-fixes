@@ -33,8 +33,24 @@ fi
 # Verify hardware
 echo "[1/11] Verifying hardware..."
 if ! lspci -d 8086:7d19 2>/dev/null | grep -q .; then
-    echo "ERROR: Intel IPU6 Meteor Lake (8086:7d19) not found."
-    echo "       This script is designed for Samsung Galaxy Book4 Ultra."
+    # Check if this is a Lunar Lake system (IPU7) — different driver, not supported
+    if lspci 2>/dev/null | grep -qi "Lunar Lake.*IPU\|Intel.*IPU.*7" || \
+       lspci -d 8086:645d 2>/dev/null | grep -q . || \
+       lspci -d 8086:6457 2>/dev/null | grep -q .; then
+        echo "ERROR: This system has Intel IPU7 (Lunar Lake), not IPU6 (Meteor Lake)."
+        echo ""
+        echo "       This webcam fix is for Meteor Lake systems only (Galaxy Book4 models)."
+        echo "       Lunar Lake (Galaxy Book5 models) uses a different camera driver (IPU7)"
+        echo "       that is not yet supported by this script."
+        echo ""
+        echo "       Lunar Lake webcam support requires different kernel drivers and a"
+        echo "       different camera HAL. Check the Intel IPU6/IPU7 driver repos for updates:"
+        echo "       https://github.com/intel/ipu6-drivers"
+    else
+        echo "ERROR: Intel IPU6 Meteor Lake (8086:7d19) not found."
+        echo "       This script is designed for Samsung Galaxy Book4 laptops with"
+        echo "       Intel Meteor Lake processors."
+    fi
     exit 1
 fi
 if ! cat /sys/bus/acpi/devices/*/hid 2>/dev/null | grep -q "OVTI02C1"; then

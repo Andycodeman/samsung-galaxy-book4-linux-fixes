@@ -1,4 +1,6 @@
-# Fix: Samsung Galaxy Book4 Ultra Webcam on Ubuntu 24.04 (Intel IPU6 / OV02C10 / Meteor Lake)
+# Fix: Samsung Galaxy Book4 Webcam on Ubuntu 24.04 (Intel IPU6 / OV02C10 / Meteor Lake)
+
+> **Meteor Lake (Galaxy Book4) only.** This fix does **not** support Lunar Lake (Galaxy Book5) — those models use Intel IPU7, which has a completely different camera driver stack. The install script will detect Lunar Lake and show a helpful message. See [Compatibility](#compatibility) below.
 
 **Tested on:** Samsung Galaxy Book4 Ultra, Ubuntu 24.04 LTS, Kernel 6.17.0-14-generic (HWE)
 **Date:** February 2026
@@ -443,16 +445,26 @@ The IPU6 device nodes have restricted permissions. The v4l2-relayd service runs 
 
 ---
 
-## What This Applies To
+## Compatibility
 
-This fix should work for any laptop with:
+### Supported — Meteor Lake (IPU6)
+
+This fix works for any laptop with:
 - Intel IPU6 on **Meteor Lake** (PCI ID `8086:7d19`)
 - **OV02C10** camera sensor
 - Ubuntu 24.04 with HWE kernel 6.17+
 
-This likely includes other Samsung Galaxy Book4 models and possibly other Meteor Lake laptops (Dell, Lenovo, etc.) with the same sensor. The core issue — IVSC modules not auto-loading — is not Samsung-specific.
+This includes Samsung Galaxy Book4 Ultra, Pro, Pro 360, and possibly other Meteor Lake laptops (Dell, Lenovo, etc.) with the same sensor. The core issue — IVSC modules not auto-loading — is not Samsung-specific.
 
 Laptops with different sensors (OV01A1S, OV13B10, HM2172, etc.) may have similar issues. The IVSC module fix (Steps 1-2) is likely universal for Meteor Lake cameras, but the camera HAL package and sensor driver compatibility may vary.
+
+### Not Supported — Lunar Lake (IPU7)
+
+**Galaxy Book5 models (Book5 Pro, Book5 Pro 360) are NOT supported.** These use Intel **Lunar Lake** processors with **IPU7**, which is a completely different camera ISP with its own driver stack. The install script detects Lunar Lake hardware and exits with a helpful message.
+
+IPU7 requires different kernel drivers and a different camera HAL than IPU6. As of February 2026, Lunar Lake webcam support on Linux is still being developed upstream. Track progress at [intel/ipu6-drivers](https://github.com/intel/ipu6-drivers).
+
+> **Note:** The [speaker fix](../speaker-fix/) in this repo **does** work on Galaxy Book5 models — only the webcam fix is Meteor Lake-specific.
 
 ---
 

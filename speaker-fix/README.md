@@ -22,7 +22,16 @@ To uninstall: `sudo ./uninstall.sh && sudo reboot`
 
 Samsung Galaxy Book4 laptops using **MAX98390 speaker amplifiers** have no audio output from the built-in speakers on Linux. The headphone jack works fine, but the laptop speakers are completely silent.
 
-**Tested on:** Samsung Galaxy Book4 Ultra, Ubuntu 24.04 LTS, Kernel 6.17.0-14-generic (HWE). The upstream PR was also reported working on Galaxy Book4 Pro, Pro 360, and Pro 16-inch by other users — this fix should work on those models too but has only been directly tested on the Ultra.
+**Tested on:**
+- Samsung Galaxy Book4 Ultra — Ubuntu 24.04 LTS, Kernel 6.17.0-14-generic (HWE)
+- Samsung Galaxy Book4 Ultra — Fedora 43, Kernel 6.18.9 (community-confirmed)
+- Samsung Galaxy Book5 Pro — Speaker fix works, mic continues to work (community-confirmed)
+
+The upstream PR was also reported working on Galaxy Book4 Pro, Pro 360, and Pro 16-inch by other users — this fix should work on those models too.
+
+> **Book5 owners:** The speaker fix works on Galaxy Book5 Pro models and the built-in microphone continues to work after installation. The install script auto-detects the number of amplifiers present on your model.
+
+> **Fedora users:** The install script auto-detects Fedora (DNF) and configures DKMS module signing using the akmods MOK key. If no key exists, it generates one and prompts for enrollment.
 
 This affects systems with:
 - **HDA Codec**: Realtek ALC298 (subsystem ID `0x144dc1d8` or similar Samsung variants)
@@ -74,7 +83,11 @@ This is a **DKMS out-of-tree driver package** that provides the missing `snd-hda
 ### Prerequisites
 
 ```bash
+# Ubuntu / Debian
 sudo apt install dkms linux-headers-$(uname -r)
+
+# Fedora
+sudo dnf install dkms kernel-devel
 ```
 
 ### Install
@@ -206,7 +219,8 @@ dmesg | grep -i max98390
 **DKMS build fails on kernel update?**
 ```bash
 # Check if headers are installed for the new kernel
-sudo apt install linux-headers-$(uname -r)
+sudo apt install linux-headers-$(uname -r)   # Ubuntu/Debian
+sudo dnf install kernel-devel                 # Fedora
 
 # Rebuild manually
 sudo dkms build max98390-hda/1.0

@@ -18,7 +18,9 @@ curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive
 
 To uninstall: `sudo ./uninstall.sh && sudo reboot`
 
-### Webcam Fix (built-in camera not detected)
+### Webcam Fix (built-in camera not detected) — Meteor Lake / Galaxy Book4 only
+
+> **Lunar Lake (Galaxy Book5) not supported:** This webcam fix is for **Meteor Lake (IPU6)** systems only — Galaxy Book4 models. Galaxy Book5 models use **Lunar Lake (IPU7)**, which has a completely different camera driver stack. The install script will detect Lunar Lake and show a helpful message. Lunar Lake webcam support is being tracked upstream at [intel/ipu6-drivers](https://github.com/intel/ipu6-drivers).
 
 ```bash
 curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/webcam-fix && ./install.sh && sudo reboot
@@ -47,9 +49,11 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 > **Fedora / DNF-based distros:** The install script auto-detects Fedora and configures DKMS module signing using the akmods MOK key (`/etc/pki/akmods/`). If no key exists, it generates one with `kmodgenca` and prompts for enrollment. Confirmed working on Fedora 43, kernel 6.18.9 (Galaxy Book4 Ultra).
 
-### [Webcam Fix](webcam-fix/) — Intel IPU6 / OV02C10
+### [Webcam Fix](webcam-fix/) — Intel IPU6 / OV02C10 (Meteor Lake only)
 
 The built-in webcam uses Intel IPU6 (Meteor Lake) with an OmniVision OV02C10 sensor. Five separate issues prevent it from working reliably: IVSC modules don't auto-load, IVSC/sensor boot race condition causing intermittent black frames, missing camera HAL, v4l2loopback name mismatch, and PipeWire device misclassification. The fix includes adding IVSC modules to the initramfs (eliminating the boot race) and hardening the relay service with auto-restart.
+
+> **Note:** This webcam fix only supports **Meteor Lake (IPU6)** — Galaxy Book4 models. Galaxy Book5 models use **Lunar Lake (IPU7)**, which has a completely different camera driver and is not supported by this fix.
 
 ## Microphone Status
 
@@ -59,14 +63,16 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 |-------|----------|---------------|--------------------------|----------------------|
 | Book4 Ultra | Meteor Lake | Legacy HDA | No | No |
 | Book4 Pro / Pro 360 | Meteor Lake | Legacy HDA | Unknown | No |
-| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **No — speaker fix disables it** |
-| Book5 Pro 14" | Lunar Lake | SOF | Varies by report | No |
+| Book5 Pro | Lunar Lake | SOF | **Yes** | **Yes — mic continues to work** |
+| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **Yes — mic continues to work** |
 
-**Why the speaker fix affects the mic:** The speaker fix uses the legacy `snd_hda_intel` audio driver, which only exposes the Realtek ALC298 analog codec. The built-in DMIC requires the SOF (Sound Open Firmware) DSP driver. On Lunar Lake models (Book5 series) where SOF is the default driver, the DMIC may already work — but installing this speaker fix switches to legacy HDA, which disables it.
+**Good news for Book5 owners:** The speaker fix has been confirmed working on Galaxy Book5 Pro models, and the built-in microphone **continues to work** after installing the speaker fix. On Lunar Lake, the SOF driver coexists with the legacy HDA driver, so both speakers and DMIC work together.
 
-**When will both work together?** The [SOF upstream PR #5616](https://github.com/thesofproject/linux/pull/5616) is building native SOF support for Galaxy Book4/5 that will handle both speakers and DMIC together. This is expected to land in **Linux kernel 7.0 (mid-April 2026)** or **7.1 (June 2026)**. Once that ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the built-in microphones should work automatically.
+**For Book4 models:** The built-in DMIC does not work on Meteor Lake with the legacy HDA driver, regardless of whether the speaker fix is installed. The DMIC requires SOF support that is not yet available for Meteor Lake.
 
-**Workarounds for now:**
+**When will Book4 mic work?** The [SOF upstream PR #5616](https://github.com/thesofproject/linux/pull/5616) is building native SOF support for Galaxy Book4/5 that will handle both speakers and DMIC together. This is expected to land in **Linux kernel 7.0 (mid-April 2026)** or **7.1 (June 2026)**. Once that ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the built-in microphones should work automatically on Book4 models too.
+
+**Workarounds for Book4 mic:**
 - Use a **USB headset or microphone** — works immediately, no configuration needed
 - Use the **3.5mm headphone/mic combo jack** — the external mic input (ALC298 Node 0x18) is functional
 
@@ -74,8 +80,11 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 - **Samsung Galaxy Book4 Ultra** — Ubuntu 24.04 LTS, kernel 6.17.0-14-generic (HWE)
 - **Samsung Galaxy Book4 Ultra** — Fedora 43, kernel 6.18.9 (community-confirmed)
+- **Samsung Galaxy Book5 Pro** — Speaker fix confirmed working, mic continues to work (community-confirmed)
 
 The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, Pro 360, and Book4 Pro 16-inch by other users, so this fix should work on those models too. If you try it on another model or distro, please report back.
+
+**Note:** The webcam fix is for **Meteor Lake (Galaxy Book4) only**. Galaxy Book5 (Lunar Lake) uses a different camera driver (IPU7) — see [Webcam Fix](webcam-fix/) for details.
 
 ## Hardware
 
