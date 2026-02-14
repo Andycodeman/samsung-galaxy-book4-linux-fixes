@@ -88,7 +88,12 @@ sudo apt install dkms linux-headers-$(uname -r)
 
 # Fedora
 sudo dnf install dkms kernel-devel
+
+# Arch / CachyOS / Manjaro
+sudo pacman -S dkms linux-headers i2c-tools
 ```
+
+> **Arch-based distros:** The install script auto-detects `apt` and `dnf` but does not yet auto-install packages via `pacman`. Install the prerequisites above manually before running the install script. The DKMS build, systemd services, and module autoload will all work normally.
 
 ### Install
 
