@@ -206,6 +206,48 @@ speaker-fix/
 - **[Kevin Cuperus](https://github.com/thesofproject/linux/pull/5616)** — Original MAX98390 HDA side-codec driver code, DSM filter configuration, and HDA component integration (upstream PR #5616)
 - **DSM firmware blobs** — Extracted from Google Redrix (Chromebook with same MAX98390 amps)
 
+## Sound Quality & EQ
+
+The speakers will sound noticeably **thinner and quieter** compared to Windows. This is expected — it's not a bug in the driver.
+
+### Why it sounds different from Windows
+
+On Windows, Samsung's audio stack applies multiple layers of DSP (Digital Signal Processing) before audio reaches the speakers:
+
+- **Dolby Atmos / Samsung Audio Wizard** — EQ curves, spatial audio, and loudness normalization tuned specifically for the laptop's speaker enclosure
+- **Psychoacoustic bass enhancement** — DSP tricks that make your brain perceive bass frequencies that the small laptop speakers physically cannot produce
+- **Dynamic range compression** — Makes quiet sounds louder and prevents distortion at high volumes
+- **Speaker protection DSP** — Allows higher output levels without damaging the drivers
+
+This fix provides the **raw hardware driver only** — it gets the speakers working, but none of the Windows audio processing exists on Linux. Additionally, the DSM (Dynamic Speaker Management) firmware in this package was extracted from a **Google Redrix Chromebook** (which uses the same MAX98390 amps), not from Samsung's Windows driver, so the tuning parameters are optimized for a different speaker enclosure.
+
+### Improving sound quality with EasyEffects
+
+You can significantly improve the sound using **[EasyEffects](https://github.com/wwmm/easyeffects)**, a PipeWire-based audio effects application that provides EQ, bass enhancement, compression, and more:
+
+```bash
+# Ubuntu / Debian
+sudo apt install easyeffects
+
+# Fedora
+sudo dnf install easyeffects
+
+# Arch / CachyOS / Manjaro
+sudo pacman -S easyeffects
+```
+
+After installing, open EasyEffects and try:
+
+1. **Bass boost** — Add a Bass Enhancer or use the Equalizer to boost frequencies below 200Hz
+2. **Loudness equalization** — Helps compensate for the lower perceived volume
+3. **Community presets** — Search for "laptop speaker" presets in the [EasyEffects Presets](https://github.com/Digitalone1/EasyEffects-Presets) community repo or similar
+
+EasyEffects runs in the background and applies effects to all audio output. It won't perfectly match Windows' Dolby Atmos processing, but it makes a significant difference.
+
+### When will it improve?
+
+The [upstream kernel fix (PR #5616)](https://github.com/thesofproject/linux/pull/5616) includes proper Realtek ALC298 codec configuration through the `alc298-samsung-max98390` quirk, which will improve baseline audio quality with correct mixer levels and output routing. This is expected in **kernel 7.0 or 7.1**. However, matching Windows' full DSP stack would require Samsung to release Linux audio software, which is unlikely in the near term.
+
 ## Troubleshooting
 
 **Speakers not working after install + reboot?**

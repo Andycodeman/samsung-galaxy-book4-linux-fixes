@@ -47,6 +47,8 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 - Loads DSM firmware with separate woofer/tweeter configurations
 - Auto-detects and removes itself when native kernel support lands
 
+> **Sound Quality:** Audio will sound thinner and lack bass compared to Windows. This is because Windows uses Samsung's DSP audio processing (Dolby Atmos, bass enhancement, EQ) which Linux doesn't have. See [Sound Quality & EQ](speaker-fix/README.md#sound-quality--eq) for details and a workaround using EasyEffects.
+
 > **Battery Impact:** This workaround keeps the speaker amps always-on, using ~0.3–0.5W extra (~3–5% battery life). This goes away automatically when native kernel support lands.
 
 > **Secure Boot:** Most laptops have Secure Boot enabled. If you've never installed a DKMS/out-of-tree kernel module before, you'll need to do a **one-time MOK key enrollment** (reboot + blue screen + password) before the modules will load. See the [full walkthrough](speaker-fix/README.md#secure-boot-setup).
