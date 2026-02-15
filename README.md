@@ -78,7 +78,7 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 **For Book4 models:** The built-in DMIC does not work on Meteor Lake with the legacy HDA driver, regardless of whether the speaker fix is installed. The DMIC requires SOF support that is not yet available for Meteor Lake.
 
-**When will Book4 mic work?** The [SOF upstream PR #5616](https://github.com/thesofproject/linux/pull/5616) is building native SOF support for Galaxy Book4/5 that will handle both speakers and DMIC together. The PR is still open and hasn't been merged yet — there is no confirmed timeline, but it could potentially land in a future kernel release (7.0+) once reviewed and accepted upstream. Once that ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the built-in microphones should work automatically on Book4 models too.
+**When will Book4 mic work?** Native support is being developed in [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616), which will handle both speakers and DMIC together. However, this PR is on GitHub for development only — getting it into mainline Linux requires submitting patches via email to the [ALSA mailing list](https://mailman.alsa-project.org/mailman/listinfo/alsa-devel) for review by the HDA/sound maintainers. This has not happened yet, and there is **no confirmed timeline** for when it will land in a mainline kernel. It could still be a ways out. Once it eventually ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the built-in microphones should work automatically on Book4 models too.
 
 **Workarounds for Book4 mic:**
 - Use a **USB headset or microphone** — works immediately, no configuration needed
@@ -113,7 +113,7 @@ The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, 
 
 ## Related
 
-- [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616) — Upstream speaker driver (not yet merged)
+- [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616) — Upstream speaker driver (development only — not yet submitted to mainline via ALSA mailing list)
 - [Samsung Galaxy Book Extras](https://github.com/joshuagrisham/samsung-galaxybook-extras) — Platform driver for Samsung-specific features
 - [Ubuntu Intel MIPI Camera Wiki](https://wiki.ubuntu.com/IntelMIPICamera) — IPU6 camera documentation
 

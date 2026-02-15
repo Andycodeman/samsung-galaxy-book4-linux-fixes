@@ -14,7 +14,7 @@ To uninstall: `sudo ./uninstall.sh && sudo reboot`
 
 ---
 
-> **Battery Impact:** This workaround keeps the speaker amplifiers powered on at all times (even when not playing audio), which uses an estimated **0.3–0.5W extra** (~3–5% battery life). This is a limitation of the workaround approach — when the upstream kernel fix eventually lands, proper power management will be handled automatically and this package will auto-remove itself.
+> **Battery Impact:** This workaround keeps the speaker amplifiers powered on at all times (even when not playing audio), which uses an estimated **0.3–0.5W extra** (~3–5% battery life). This is a limitation of the DKMS workaround (not of the upstream driver) — our driver bypasses the HDA playback hooks to avoid needing a kernel recompile. When native kernel support eventually lands (no confirmed timeline yet — see below), proper power management will be handled automatically and this package will auto-remove itself.
 
 > **Secure Boot Users:** If you have Secure Boot enabled (most laptops do by default), you **must** enroll a Machine Owner Key (MOK) before the driver modules will load. If you've never installed a DKMS or out-of-tree kernel module before, you will need to complete a **one-time MOK enrollment** that involves a reboot and typing a password in a blue setup screen. See the [Secure Boot Setup](#secure-boot-setup) section below — **do this before running the install script**.
 
@@ -48,7 +48,7 @@ The stock kernel is missing three things needed to drive these amps:
 2. **`snd_hda_codec_alc269`** has no quirk entry for Samsung's MAX98390 subsystem IDs, so it never sets up the HDA side-codec component master
 3. **`snd-hda-scodec-max98390`** (the actual amp driver) doesn't exist in the kernel tree yet
 
-An upstream fix is in progress at [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616), but hasn't been merged into mainline yet.
+An upstream fix is being developed at [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616), but has not yet been submitted to mainline Linux via the ALSA mailing list. There is no confirmed timeline for when native support will land — it could still be a ways out.
 
 ## What This Fix Does
 
@@ -267,7 +267,7 @@ EasyEffects runs in the background and applies effects to all audio output. It w
 
 ### When will it improve?
 
-The [upstream kernel fix (PR #5616)](https://github.com/thesofproject/linux/pull/5616) includes proper Realtek ALC298 codec configuration through the `alc298-samsung-max98390` quirk, which will improve baseline audio quality with correct mixer levels and output routing. The PR is still open and hasn't been merged yet — there is no confirmed timeline, but it could potentially land in a future kernel release (7.0+) once reviewed and accepted upstream. However, even with the upstream fix, matching Windows' full DSP stack would require Samsung to release Linux audio software, which is unlikely in the near term.
+The [upstream kernel fix (PR #5616)](https://github.com/thesofproject/linux/pull/5616) includes proper Realtek ALC298 codec configuration through the `alc298-samsung-max98390` quirk, which will improve baseline audio quality with correct mixer levels and output routing. However, the PR is on GitHub for development only — it still needs to be submitted as patches via the [ALSA mailing list](https://mailman.alsa-project.org/mailman/listinfo/alsa-devel) to reach mainline Linux. There is **no confirmed timeline** and it could still be a ways out. Even with the upstream fix, matching Windows' full DSP stack would require Samsung to release Linux audio software, which is unlikely in the near term.
 
 ## Troubleshooting
 
