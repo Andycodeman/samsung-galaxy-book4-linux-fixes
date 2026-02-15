@@ -67,10 +67,12 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 |-------|----------|---------------|--------------------------|----------------------|
 | Book4 Ultra | Meteor Lake | Legacy HDA | No | No |
 | Book4 Pro / Pro 360 | Meteor Lake | Legacy HDA | Unknown | No |
-| Book5 Pro | Lunar Lake | SOF | **Yes** | **Yes — mic continues to work** |
-| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **Yes — mic continues to work** |
+| Book5 Pro | Lunar Lake | SOF | **Yes** | **Yes** (Ubuntu/Fedora confirmed) |
+| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **Yes** (Ubuntu/Fedora confirmed) |
 
 **Good news for Book5 owners:** The speaker fix has been confirmed working on Galaxy Book5 Pro models, and the built-in microphone **continues to work** after installing the speaker fix. On Lunar Lake, the SOF driver coexists with the legacy HDA driver, so both speakers and DMIC work together.
+
+> **Arch-based distros (CachyOS, Manjaro, etc.):** The DMIC on Book5 models requires SOF firmware, which is **not installed by default** on Arch. If your mic doesn't work after installing the speaker fix, install the firmware: `sudo pacman -S sof-firmware` and reboot. This is not caused by the speaker fix — the mic may not have worked before either without this package.
 
 **For Book4 models:** The built-in DMIC does not work on Meteor Lake with the legacy HDA driver, regardless of whether the speaker fix is installed. The DMIC requires SOF support that is not yet available for Meteor Lake.
 

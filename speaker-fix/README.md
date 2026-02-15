@@ -29,7 +29,9 @@ Samsung Galaxy Book4 laptops using **MAX98390 speaker amplifiers** have no audio
 
 The upstream PR was also reported working on Galaxy Book4 Pro, Pro 360, and Pro 16-inch by other users — this fix should work on those models too.
 
-> **Book5 owners:** The speaker fix works on Galaxy Book5 Pro models and the built-in microphone continues to work after installation. The install script auto-detects the number of amplifiers present on your model.
+> **Book5 owners:** The speaker fix works on Galaxy Book5 Pro models and the built-in microphone continues to work after installation (confirmed on Ubuntu and Fedora). The install script auto-detects the number of amplifiers present on your model.
+
+> **Arch-based distros (CachyOS, Manjaro, etc.):** The built-in mic on Book5 models requires SOF firmware, which Arch does not install by default. If your mic doesn't work, install it: `sudo pacman -S sof-firmware` and reboot.
 
 > **Fedora users:** The install script auto-detects Fedora (DNF) and configures DKMS module signing using the akmods MOK key. If no key exists, it generates one and prompts for enrollment.
 
