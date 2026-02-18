@@ -130,6 +130,37 @@ dkms add "${DKMS_NAME}/${DKMS_VER}"
 dkms build "${DKMS_NAME}/${DKMS_VER}"
 dkms install "${DKMS_NAME}/${DKMS_VER}"
 
+# Verify module signing when Secure Boot is enabled
+if mokutil --sb-state 2>/dev/null | grep -q "SecureBoot enabled"; then
+    MOD_PATH=$(find /lib/modules/$(uname -r) -name "snd-hda-scodec-max98390.ko*" 2>/dev/null | head -1)
+    if [ -n "$MOD_PATH" ]; then
+        if ! modinfo "$MOD_PATH" 2>/dev/null | grep -qi "^sig"; then
+            echo ""
+            echo "WARNING: Secure Boot is enabled but the modules are NOT signed."
+            echo "         This can happen when the MOK signing key was just configured."
+            echo "         Rebuilding modules with signing..."
+            dkms remove "${DKMS_NAME}/${DKMS_VER}" --all 2>/dev/null || true
+            dkms add "${DKMS_NAME}/${DKMS_VER}"
+            dkms build "${DKMS_NAME}/${DKMS_VER}"
+            dkms install "${DKMS_NAME}/${DKMS_VER}"
+
+            # Check again
+            MOD_PATH=$(find /lib/modules/$(uname -r) -name "snd-hda-scodec-max98390.ko*" 2>/dev/null | head -1)
+            if [ -n "$MOD_PATH" ] && modinfo "$MOD_PATH" 2>/dev/null | grep -qi "^sig"; then
+                echo "         ✓ Modules are now signed"
+            else
+                echo ""
+                echo "WARNING: Modules are still unsigned. They will NOT load with Secure Boot."
+                echo "         After rebooting and completing MOK enrollment, run the installer again:"
+                echo "         sudo bash $(cd "$(dirname "$0")" && pwd)/install.sh"
+                echo "         Or manually rebuild: sudo dkms remove ${DKMS_NAME}/${DKMS_VER} --all && sudo dkms install ${DKMS_NAME}/${DKMS_VER}"
+            fi
+        else
+            echo "✓ Modules are signed for Secure Boot"
+        fi
+    fi
+fi
+
 # Install helper scripts and systemd services
 echo "Installing services..."
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

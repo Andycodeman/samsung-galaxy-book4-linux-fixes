@@ -341,6 +341,34 @@ SIGNEOF
 
     rm -rf "$TMPDIR"
     echo "  ✓ vision-driver/${VISION_DRIVER_VER} installed via DKMS"
+
+    # Verify module signing when Secure Boot is enabled
+    if mokutil --sb-state 2>/dev/null | grep -q "SecureBoot enabled"; then
+        MOD_PATH=$(find /lib/modules/$(uname -r) -name "intel_cvs.ko*" 2>/dev/null | head -1)
+        if [[ -n "$MOD_PATH" ]]; then
+            if ! modinfo "$MOD_PATH" 2>/dev/null | grep -qi "^sig"; then
+                echo ""
+                echo "  ⚠ Secure Boot is enabled but the module is NOT signed."
+                echo "    This can happen when the MOK signing key was just configured."
+                echo "    Rebuilding module with signing..."
+                sudo dkms remove "vision-driver/${VISION_DRIVER_VER}" --all 2>/dev/null || true
+                sudo dkms add "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null || true
+                sudo dkms build "vision-driver/${VISION_DRIVER_VER}"
+                sudo dkms install "vision-driver/${VISION_DRIVER_VER}"
+
+                MOD_PATH=$(find /lib/modules/$(uname -r) -name "intel_cvs.ko*" 2>/dev/null | head -1)
+                if [[ -n "$MOD_PATH" ]] && modinfo "$MOD_PATH" 2>/dev/null | grep -qi "^sig"; then
+                    echo "  ✓ Module is now signed"
+                else
+                    echo ""
+                    echo "  ⚠ Module is still unsigned. It will NOT load with Secure Boot."
+                    echo "    After rebooting and completing MOK enrollment, run the installer again."
+                fi
+            else
+                echo "  ✓ Module is signed for Secure Boot"
+            fi
+        fi
+    fi
 fi
 
 # ──────────────────────────────────────────────
