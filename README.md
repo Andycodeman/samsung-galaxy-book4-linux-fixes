@@ -2,7 +2,7 @@
 
 Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy Book4/5 laptops. Tested on the **Galaxy Book4 Ultra** — should also work on Pro, Pro 360, and Book5 models with the same hardware, but only the Ultra has been directly verified.
 
-> **Distro support:** The **speaker fix** works on Ubuntu, Fedora, and Arch-based distros (CachyOS, Manjaro, etc. — `dkms` and `linux-headers` must be installed first, see [speaker-fix README](speaker-fix/)). The **webcam fix** currently requires **Ubuntu or Ubuntu-based distros** (uses apt, PPA packages, and initramfs-tools). Fedora and Arch are not yet supported for the webcam fix.
+> **Distro support:** The **speaker fix** works on Ubuntu, Fedora, and Arch-based distros (CachyOS, Manjaro, etc. — `dkms` and `linux-headers` must be installed first, see [speaker-fix README](speaker-fix/)). The **webcam fix** (Book4/Meteor Lake) currently requires **Ubuntu or Ubuntu-based distros** (uses apt, PPA packages, and initramfs-tools). An **experimental Book5/Lunar Lake webcam fix** is available for **Arch and Fedora** — see [webcam-fix-book5](webcam-fix-book5/).
 
 > **Disclaimer:** These fixes involve loading kernel modules and running scripts with root privileges. While they are designed to be safe and reversible (both include uninstall steps), they are provided **as-is with no warranty**. Modifying kernel modules carries inherent risk — in rare cases, incompatible drivers could cause boot issues or system instability. **Use at your own risk.** It is recommended to have a recent backup and know how to access recovery mode before proceeding.
 
@@ -34,6 +34,18 @@ To uninstall: `./uninstall.sh && sudo reboot`
 
 The webcam works with **Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC**, and most other apps. See [webcam known app issues](webcam-fix/README.md#known-app-issues) for Cheese and GNOME Camera compatibility.
 
+### Webcam Fix (built-in camera not detected) — Lunar Lake / Galaxy Book5 / Arch & Fedora — EXPERIMENTAL
+
+> **!! EXPERIMENTAL — UNTESTED ON SAMSUNG HARDWARE !!** This fix is based on working setups on other Lunar Lake laptops (Dell XPS 13, Lenovo X1 Carbon Gen13) and one unverified Book5 360 report. **It may not work or may require manual adjustments.** If you try it, please [report your results](https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/issues). See the [full README](webcam-fix-book5/) for details, known issues, and tested hardware.
+
+> **Requires kernel 6.18+** and **Arch or Fedora** (Ubuntu not yet supported for IPU7). Uses a completely different pipeline than the Book4 fix: libcamera + PipeWire (no v4l2loopback relay needed).
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/webcam-fix-book5 && ./install.sh && sudo reboot
+```
+
+To uninstall: `./uninstall.sh && sudo reboot`
+
 ---
 
 ## What's Included
@@ -60,6 +72,10 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 The built-in webcam uses Intel IPU6 (Meteor Lake) with an OmniVision OV02C10 sensor. Five separate issues prevent it from working reliably: IVSC modules don't auto-load, IVSC/sensor boot race condition causing intermittent black frames, missing camera HAL, v4l2loopback name mismatch, and PipeWire device misclassification. The fix includes adding IVSC modules to the initramfs (eliminating the boot race) and hardening the relay service with auto-restart.
 
 > **Note:** This webcam fix only supports **Meteor Lake (IPU6)** on **Ubuntu (and Ubuntu-based distros)**. Galaxy Book5 (Lunar Lake / IPU7) is not supported (different driver stack). Fedora and Arch-based distros are not yet supported (the install script uses apt, Ubuntu PPAs, and initramfs-tools).
+
+### [Webcam Fix — Book5 / Lunar Lake](webcam-fix-book5/) — IPU7 + libcamera (EXPERIMENTAL)
+
+**!! Experimental — untested on Samsung hardware !!** For Galaxy Book5 (Lunar Lake / IPU7) on Arch and Fedora. Installs Intel's `intel_cvs` kernel module via DKMS and configures the libcamera + PipeWire pipeline. No v4l2loopback or relay needed — libcamera talks to PipeWire directly. Requires kernel 6.18+. See the [webcam-fix-book5 README](webcam-fix-book5/) for details, known issues, and how to report results.
 
 ## Microphone Status
 
@@ -93,7 +109,7 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, Pro 360, and Book4 Pro 16-inch by other users, so this fix should work on those models too. If you try it on another model or distro, please report back.
 
-**Note:** The webcam fix is for **Meteor Lake (Galaxy Book4) only**. Galaxy Book5 (Lunar Lake) uses a different camera driver (IPU7) — see [Webcam Fix](webcam-fix/) for details.
+**Note:** The Book4 webcam fix is for **Meteor Lake (IPU6) only**. Galaxy Book5 (Lunar Lake / IPU7) has an **[experimental webcam fix](webcam-fix-book5/)** available for Arch and Fedora.
 
 ## Hardware
 

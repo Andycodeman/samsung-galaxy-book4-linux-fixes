@@ -1,0 +1,63 @@
+#!/bin/bash
+# Uninstall the Galaxy Book5 webcam fix
+# Removes DKMS module, config files, and environment settings added by install.sh
+# Does NOT uninstall distro packages (libcamera, pipewire-libcamera, etc.)
+
+set -e
+
+VISION_DRIVER_VER="1.0.0"
+SRC_DIR="/usr/src/vision-driver-${VISION_DRIVER_VER}"
+
+echo "=============================================="
+echo "  Samsung Galaxy Book5 Webcam Fix Uninstaller"
+echo "=============================================="
+echo ""
+
+if [[ $EUID -eq 0 ]]; then
+    echo "ERROR: Don't run this as root. The script will use sudo where needed."
+    exit 1
+fi
+
+# [1/5] Remove DKMS module
+echo "[1/5] Removing vision-driver DKMS module..."
+if dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "vision-driver"; then
+    sudo dkms remove "vision-driver/${VISION_DRIVER_VER}" --all 2>/dev/null || true
+    echo "  ✓ DKMS module removed"
+else
+    echo "  ✓ DKMS module not installed (nothing to remove)"
+fi
+
+# [2/5] Remove DKMS source
+echo "[2/5] Removing DKMS source directory..."
+if [[ -d "$SRC_DIR" ]]; then
+    sudo rm -rf "$SRC_DIR"
+    echo "  ✓ Removed ${SRC_DIR}"
+else
+    echo "  ✓ Source directory not present"
+fi
+
+# [3/5] Remove modprobe config
+echo "[3/5] Removing module configuration..."
+sudo rm -f /etc/modprobe.d/intel-cvs-camera.conf
+echo "  ✓ Removed /etc/modprobe.d/intel-cvs-camera.conf"
+
+# [4/5] Remove modules-load config
+echo "[4/5] Removing module autoload configuration..."
+sudo rm -f /etc/modules-load.d/intel-cvs.conf
+echo "  ✓ Removed /etc/modules-load.d/intel-cvs.conf"
+
+# [5/5] Remove environment configs
+echo "[5/5] Removing environment configuration..."
+sudo rm -f /etc/environment.d/libcamera-ipa.conf
+sudo rm -f /etc/profile.d/libcamera-ipa.sh
+echo "  ✓ Removed libcamera environment files"
+
+echo ""
+echo "=============================================="
+echo "  Uninstall complete."
+echo ""
+echo "  Note: Distro packages (libcamera, pipewire-libcamera, etc.) were NOT"
+echo "  removed — you may need them for other purposes. Remove manually if desired."
+echo ""
+echo "  Reboot to fully restore the original state."
+echo "=============================================="
