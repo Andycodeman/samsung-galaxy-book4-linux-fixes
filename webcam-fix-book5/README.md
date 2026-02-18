@@ -6,7 +6,7 @@
 
 **Status:** Experimental / Community testing
 **Supported distros:** Arch-based (CachyOS, Manjaro, EndeavourOS), Fedora 42+, and Ubuntu (with libcamera 0.6+ built from source)
-**Hardware:** Intel IPU7 (Lunar Lake, PCI ID `8086:645d` or `8086:6457`), OV02C10 sensor (`OVTI02C1`)
+**Hardware:** Intel IPU7 (Lunar Lake, PCI ID `8086:645d` or `8086:6457`), OV02C10 (`OVTI02C1`) or OV02E10 (`OVTI02E1`) sensor
 
 ---
 
@@ -15,9 +15,11 @@
 The Samsung Galaxy Book5 (Lunar Lake) webcam doesn't work on Linux because:
 
 1. **Missing `intel_cvs` kernel module** — The Intel Computer Vision Subsystem (CVS) module is required to power the camera sensor on IPU7, but it's not yet in the mainline kernel. Intel provides it via DKMS from their [vision-drivers](https://github.com/intel/vision-drivers) repo.
-2. **Missing userspace pipeline** — IPU7 uses libcamera (not the IPU6 camera HAL). The `pipewire-libcamera` plugin connects libcamera to PipeWire so apps can access the camera.
+2. **LJCA modules don't auto-load** — The Lunar Lake Joint Controller for Accessories (`usb_ljca`, `gpio_ljca`) provides GPIO/USB control needed by the vision subsystem. These must load before `intel_cvs` and the sensor, but aren't auto-loaded on all systems.
+3. **Missing userspace pipeline** — IPU7 uses libcamera (not the IPU6 camera HAL). The `pipewire-libcamera` plugin connects libcamera to PipeWire so apps can access the camera.
+4. **Raw IPU7 video nodes exposed** — IPU7 creates multiple `/dev/video*` nodes that confuse apps enumerating cameras. These need to be hidden via udev.
 
-This installer packages those two pieces into a single script.
+This installer packages all of those pieces into a single script.
 
 ---
 
@@ -26,13 +28,9 @@ This installer packages those two pieces into a single script.
 The IPU7 camera pipeline is simpler than IPU6 — no v4l2loopback or relay service needed:
 
 ```
-Intel IPU7  →  OV02C10 sensor  →  libcamera  →  PipeWire  →  Applications
-(kernel)       (kernel)           (userspace)    (pipewire-    (Firefox, Zoom,
-                                                  libcamera)    Chrome, etc.)
-                  ↑
-            intel_cvs (DKMS)
-         powers the sensor via
-         Computer Vision Subsystem
+usb_ljca + gpio_ljca  →  intel_cvs (DKMS)  →  OV02C10/OV02E10  →  libcamera  →  PipeWire  →  Apps
+(LJCA GPIO/USB)           (powers sensor)      (kernel sensor)      (userspace)   (pipewire-    (Firefox,
+                                                                                   libcamera)    Zoom, etc.)
 ```
 
 **Key difference from Book4 (IPU6) fix:** The Book4 fix uses Intel's proprietary camera HAL (`icamerasrc`) with a v4l2loopback relay. The Book5 fix uses the open-source libcamera stack, which talks directly to PipeWire — no relay, no loopback, no initramfs changes needed.
@@ -141,10 +139,10 @@ If that doesn't help, verify that `pipewire-libcamera` (Arch) or `pipewire-plugi
 
 | Device | Platform | Distro | Kernel | Status | Notes |
 |--------|----------|--------|--------|--------|-------|
-| Dell XPS 13 9350 | Lunar Lake | Arch | 6.18+ | Working | Same OV02C10 sensor |
+| Dell XPS 13 9350 | Lunar Lake | Arch | 6.18+ | Working | OV02C10 sensor |
 | Lenovo X1 Carbon Gen13 | Lunar Lake | Fedora 42 | 6.18+ | Working | Confirmed by community |
 | Samsung Galaxy Book5 360 | Lunar Lake | Fedora 42 | 6.18+ | Working (browsers) | Community report |
-| Samsung Galaxy Book5 360 | Lunar Lake | Ubuntu 24.04 | 6.19.2 | Working (qcam) | Image flipped, Firefox conflict. Kernel + libcamera built from source. |
+| Samsung Galaxy Book5 360 | Lunar Lake | Ubuntu 24.04 | 6.19.2 | Working (qcam) | OV02E10 sensor. Image flipped, Firefox conflict. Kernel + libcamera from source. |
 | Samsung Galaxy Book5 Pro | Lunar Lake | — | — | **UNTESTED** | Please report if you try |
 | Samsung Galaxy Book5 Pro 360 | Lunar Lake | — | — | **UNTESTED** | Please report if you try |
 
@@ -178,8 +176,9 @@ The install script creates these files:
 
 | File | Purpose |
 |------|---------|
-| `/etc/modules-load.d/intel-cvs.conf` | Load intel_cvs module at boot |
-| `/etc/modprobe.d/intel-cvs-camera.conf` | Softdep: intel_cvs loads before ov02c10 |
+| `/etc/modules-load.d/intel-ipu7-camera.conf` | Load LJCA + intel_cvs modules at boot |
+| `/etc/modprobe.d/intel-ipu7-camera.conf` | Softdep: LJCA -> intel_cvs -> sensor load order |
+| `/etc/udev/rules.d/90-hide-ipu7-v4l2.rules` | Hide raw IPU7 video nodes from apps |
 | `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH (systemd sessions) |
 | `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH (login shells) |
 | `/usr/src/vision-driver-1.0.0/` | DKMS source for intel_cvs module |
@@ -192,10 +191,12 @@ All files are removed by `uninstall.sh`.
 
 ### `cam -l` shows no cameras
 
-1. Verify intel_cvs is loaded: `lsmod | grep intel_cvs`
-2. Check kernel messages: `journalctl -b -k | grep -i "cvs\|ov02c10\|ipu"`
-3. Verify IPU7 hardware: `lspci -d 8086:645d` or `lspci -d 8086:6457`
-4. Try rebooting — some module loading sequences only work on fresh boot
+1. Verify LJCA modules are loaded: `lsmod | grep ljca`
+2. Verify intel_cvs is loaded: `lsmod | grep intel_cvs`
+3. Check kernel messages: `journalctl -b -k | grep -i "cvs\|ov02c10\|ov02e10\|ljca\|ipu"`
+4. Verify IPU7 hardware: `lspci -d 8086:645d` or `lspci -d 8086:6457`
+5. Try loading manually in order: `sudo modprobe usb_ljca && sudo modprobe gpio_ljca && sudo modprobe intel_cvs`
+6. Try rebooting — some module loading sequences only work on fresh boot
 
 ### DKMS build fails
 

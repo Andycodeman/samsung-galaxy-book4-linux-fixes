@@ -18,8 +18,8 @@ if [[ $EUID -eq 0 ]]; then
     exit 1
 fi
 
-# [1/5] Remove DKMS module
-echo "[1/5] Removing vision-driver DKMS module..."
+# [1/6] Remove DKMS module
+echo "[1/6] Removing vision-driver DKMS module..."
 if dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "vision-driver"; then
     sudo dkms remove "vision-driver/${VISION_DRIVER_VER}" --all 2>/dev/null || true
     echo "  ✓ DKMS module removed"
@@ -27,8 +27,8 @@ else
     echo "  ✓ DKMS module not installed (nothing to remove)"
 fi
 
-# [2/5] Remove DKMS source
-echo "[2/5] Removing DKMS source directory..."
+# [2/6] Remove DKMS source
+echo "[2/6] Removing DKMS source directory..."
 if [[ -d "$SRC_DIR" ]]; then
     sudo rm -rf "$SRC_DIR"
     echo "  ✓ Removed ${SRC_DIR}"
@@ -36,18 +36,28 @@ else
     echo "  ✓ Source directory not present"
 fi
 
-# [3/5] Remove modprobe config
-echo "[3/5] Removing module configuration..."
+# [3/6] Remove modprobe config
+echo "[3/6] Removing module configuration..."
+sudo rm -f /etc/modprobe.d/intel-ipu7-camera.conf
+# Also remove old name from earlier versions of the installer
 sudo rm -f /etc/modprobe.d/intel-cvs-camera.conf
-echo "  ✓ Removed /etc/modprobe.d/intel-cvs-camera.conf"
+echo "  ✓ Module configuration removed"
 
-# [4/5] Remove modules-load config
-echo "[4/5] Removing module autoload configuration..."
+# [4/6] Remove modules-load config
+echo "[4/6] Removing module autoload configuration..."
+sudo rm -f /etc/modules-load.d/intel-ipu7-camera.conf
+# Also remove old name from earlier versions of the installer
 sudo rm -f /etc/modules-load.d/intel-cvs.conf
-echo "  ✓ Removed /etc/modules-load.d/intel-cvs.conf"
+echo "  ✓ Module autoload configuration removed"
 
-# [5/5] Remove environment configs
-echo "[5/5] Removing environment configuration..."
+# [5/6] Remove udev rules
+echo "[5/6] Removing udev rules..."
+sudo rm -f /etc/udev/rules.d/90-hide-ipu7-v4l2.rules
+sudo udevadm control --reload-rules 2>/dev/null || true
+echo "  ✓ Udev rules removed"
+
+# [6/6] Remove environment configs
+echo "[6/6] Removing environment configuration..."
 sudo rm -f /etc/environment.d/libcamera-ipa.conf
 sudo rm -f /etc/profile.d/libcamera-ipa.sh
 echo "  ✓ Removed libcamera environment files"
