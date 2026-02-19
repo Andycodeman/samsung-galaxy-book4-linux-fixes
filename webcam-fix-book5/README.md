@@ -135,6 +135,26 @@ wpctl status | grep -A 15 "Video"
 
 One user reported that opening the camera in Firefox kills the image in qcam, requiring a reboot to recover. This appears to be a resource contention issue between PipeWire and direct libcamera access. Avoid running qcam and browser-based camera access simultaneously.
 
+### Browser doesn't show camera / no permission prompt
+
+Browsers require explicit PipeWire camera support to be enabled:
+
+**Firefox:** Navigate to `about:config` and set:
+```
+media.webrtc.camera.allow-pipewire = true
+```
+
+**Chrome / Chromium:** Navigate to `chrome://flags` and enable:
+```
+#enable-webrtc-pipewire-camera
+```
+Then relaunch the browser. If Chrome still shows "waiting for your permission" without a prompt, try:
+1. Go to `chrome://settings/content/camera` and ensure the correct camera is selected
+2. Clear site permissions for the page you're testing
+3. Try an Incognito window (to rule out extension conflicts)
+
+**Note:** These flags may become enabled by default in future browser versions.
+
 ### PipeWire doesn't see the camera
 
 If the camera works with `cam -l` but PipeWire apps don't see it:
