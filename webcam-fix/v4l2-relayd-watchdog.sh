@@ -14,7 +14,7 @@ FAIL_DIR="/run/v4l2-relayd-watchdog"
 FAIL_COUNT_FILE="$FAIL_DIR/fail_count"
 GRACE_SECONDS=30
 MAX_FAILURES=3
-MIN_JPEG_BYTES=10240  # 10KB — real 1280x720 frames are 30-200KB; blank < 5KB
+MIN_JPEG_BYTES=10240  # 10KB — real frames are 15-200KB; blank < 8KB
 
 ISYS_DEVICE="intel_ipu6.isys.40"
 ISYS_DRIVER_PATH="/sys/bus/auxiliary/drivers/intel_ipu6_isys.isys"

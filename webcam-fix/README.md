@@ -268,11 +268,11 @@ It should contain:
 ```
 VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
 FORMAT=YUY2
-WIDTH=1280
-HEIGHT=720
 FRAMERATE=30/1
 CARD_LABEL=Intel MIPI Camera
 ```
+
+> **No hardcoded WIDTH/HEIGHT.** The camera HAL (`libcamhal-ipu6epmtl`) can change its default output resolution across package updates (e.g. 1280x720 → 1920x1080). If WIDTH/HEIGHT don't match icamerasrc's native resolution, `videoconvert` can't scale (it only converts pixel formats), causing the relay to silently produce blank frames. Instead, the resolution is auto-detected at service startup (see Step 7b).
 
 > **Why `videoconvert` in VIDEOSRC?** The `icamerasrc` GStreamer element only outputs NV12 format. The v4l2-relayd service constructs its pipeline with `appsrc caps=...format=YUY2...`, which expects the input side to already be in YUY2. Without `videoconvert` in the input pipeline, GStreamer caps negotiation fails silently — the relay appears to run but delivers zero frames to the loopback device (black screen in apps). The `videoconvert` element converts NV12→YUY2 before frames reach the appsrc.
 
@@ -283,12 +283,20 @@ sudo mkdir -p /etc/v4l2-relayd.d
 sudo tee /etc/v4l2-relayd.d/default.conf << 'EOF'
 VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
 FORMAT=YUY2
-WIDTH=1280
-HEIGHT=720
 FRAMERATE=30/1
 CARD_LABEL=Intel MIPI Camera
 EOF
 ```
+
+### Step 7b: Install Resolution Auto-Detection
+
+The camera HAL may change its default output resolution across package updates. Instead of hardcoding WIDTH/HEIGHT (which causes silent blank frames on mismatch), a detection script probes icamerasrc at service startup:
+
+```bash
+sudo install -m 755 v4l2-relayd-detect-resolution.sh /usr/local/sbin/v4l2-relayd-detect-resolution.sh
+```
+
+This script runs as `ExecStartPre` in the systemd service (configured in Step 8), probes icamerasrc for its negotiated caps, and writes WIDTH/HEIGHT to `/run/v4l2-relayd-resolution.env` which the service reads as an `EnvironmentFile`.
 
 Now start the relay service:
 
@@ -313,6 +321,12 @@ StartLimitIntervalSec=60
 StartLimitBurst=10
 
 [Service]
+# Auto-detect camera resolution before starting the relay.
+# The HAL may change its default resolution across updates (e.g. 720p → 1080p),
+# so we probe icamerasrc at startup instead of hardcoding WIDTH/HEIGHT.
+ExecStartPre=/usr/local/sbin/v4l2-relayd-detect-resolution.sh
+EnvironmentFile=-/run/v4l2-relayd-resolution.env
+
 # After the relay connects, re-trigger udev on the loopback device and
 # restart the user's WirePlumber so it re-discovers the device as
 # VIDEO_CAPTURE (v4l2loopback with exclusive_caps=1 only advertises
@@ -360,7 +374,7 @@ Without the ExecStartPost fix, only apps that directly open `/dev/video0` via V4
 Over time (days of uptime, or after suspend/resume), CSI-2 frame sync errors can accumulate and the relay starts producing white/blank frames — but the process stays running, so systemd's `Restart=always` never triggers. A lightweight watchdog timer detects this and auto-recovers:
 
 - Runs every 3 minutes via systemd timer
-- Captures a test frame from `/dev/video0` and checks JPEG file size (real frames are 30-200KB; blank frames compress to <5KB)
+- Captures a test frame from `/dev/video0` and checks JPEG file size (real frames are 15-200KB; blank frames compress to <8KB)
 - Skips checks when the relay is initializing (30s grace period), the lid is closed, or the relay isn't running
 - After 3 consecutive blank-frame detections, performs recovery: stops the relay, cleans stale shared memory, unbinds/rebinds IPU6 ISYS, re-probes the sensor, and restarts the relay
 
@@ -386,7 +400,7 @@ ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 -update 1 -y /tmp/webcam_test.jpg
 
 # Verify
 file /tmp/webcam_test.jpg
-# Should output: JPEG image data, baseline, precision 8, 1280x720, components 3
+# Should output: JPEG image data, baseline, precision 8, 1920x1080 (or similar), components 3
 
 # Live preview
 mpv av://v4l2:/dev/video0 --profile=low-latency
@@ -405,7 +419,8 @@ The install script creates these persistent configuration files:
 - `/etc/v4l2-relayd.d/default.conf` — Camera HAL relay configuration
 - `/etc/udev/rules.d/90-hide-ipu6-v4l2.rules` — Hides raw IPU6 nodes from applications
 - `/etc/initramfs-tools/modules` — IVSC module entries (loads before udev sensor probe)
-- `/etc/systemd/system/v4l2-relayd@default.service.d/override.conf` — Auto-restart and WirePlumber re-trigger
+- `/etc/systemd/system/v4l2-relayd@default.service.d/override.conf` — Auto-restart, resolution detection, and WirePlumber re-trigger
+- `/usr/local/sbin/v4l2-relayd-detect-resolution.sh` — Probes icamerasrc at startup to auto-detect WIDTH/HEIGHT
 - `/usr/local/sbin/v4l2-relayd-watchdog.sh` — Blank frame detection and recovery script
 - `/etc/systemd/system/v4l2-relayd-watchdog.service` — Watchdog oneshot service
 - `/etc/systemd/system/v4l2-relayd-watchdog.timer` — Watchdog timer (every 3 minutes)
@@ -455,8 +470,8 @@ journalctl -u v4l2-relayd --no-pager | tail -20
 Common causes:
 - **`device=/dev/""`** — v4l2loopback name mismatch. Reload with `sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback devices=1 exclusive_caps=1 card_label="Intel MIPI Camera"`
 - **`gst_element_set_state: assertion 'GST_IS_ELEMENT' failed`** — icamerasrc can't connect to the camera. Verify IVSC modules are loaded: `lsmod | grep ivsc`
-- **`failed to config stream for format NV12 1920x1080`** — Wrong resolution. Ensure `/etc/v4l2-relayd.d/default.conf` specifies 1280x720, not 1920x1080
-- **Black screen (relay running, no frames)** — Missing `videoconvert` in VIDEOSRC. Ensure the config has `VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert`. The `icamerasrc` element only produces NV12; without `videoconvert`, the caps negotiation to YUY2 fails silently.
+- **Blank frames (relay running, small JPEG ~7KB)** — Resolution mismatch. If WIDTH/HEIGHT in the config don't match icamerasrc's native output, `videoconvert` can't scale and produces blank frames. Remove hardcoded WIDTH/HEIGHT from `/etc/v4l2-relayd.d/default.conf` and ensure the `ExecStartPre` auto-detection script is installed (see Step 7b). Check detected resolution: `cat /run/v4l2-relayd-resolution.env`
+- **Black screen (relay running, zero frames)** — Missing `videoconvert` in VIDEOSRC. Ensure the config has `VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert`. The `icamerasrc` element only produces NV12; without `videoconvert`, the caps negotiation to YUY2 fails silently.
 
 ### No `/dev/video0` device
 

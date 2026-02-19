@@ -45,6 +45,8 @@ sudo systemctl stop v4l2-relayd-watchdog.timer 2>/dev/null || true
 sudo systemctl disable v4l2-relayd-watchdog.timer 2>/dev/null || true
 sudo systemctl stop v4l2-relayd-watchdog.service 2>/dev/null || true
 sudo rm -f /usr/local/sbin/v4l2-relayd-watchdog.sh
+sudo rm -f /usr/local/sbin/v4l2-relayd-detect-resolution.sh
+sudo rm -f /run/v4l2-relayd-resolution.env
 sudo rm -f /etc/systemd/system/v4l2-relayd-watchdog.service
 sudo rm -f /etc/systemd/system/v4l2-relayd-watchdog.timer
 sudo rm -rf /run/v4l2-relayd-watchdog

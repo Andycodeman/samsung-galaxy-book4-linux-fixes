@@ -204,14 +204,19 @@ sudo mkdir -p /etc/v4l2-relayd.d
 sudo tee /etc/v4l2-relayd.d/default.conf > /dev/null << 'EOF'
 VIDEOSRC=icamerasrc buffer-count=7 ! videoconvert
 FORMAT=YUY2
-WIDTH=1280
-HEIGHT=720
 FRAMERATE=30/1
 CARD_LABEL=Intel MIPI Camera
 EOF
 echo "  ✓ v4l2-relayd configured for IPU6"
 
-# Harden v4l2-relayd with auto-restart and sensor re-probe before start
+# Install resolution auto-detection script
+# The camera HAL may change its default resolution across updates (e.g.
+# 720p → 1080p). Instead of hardcoding WIDTH/HEIGHT, we probe icamerasrc
+# at service startup to detect the native resolution.
+sudo install -m 755 "$SCRIPT_DIR/v4l2-relayd-detect-resolution.sh" /usr/local/sbin/v4l2-relayd-detect-resolution.sh
+echo "  ✓ Resolution auto-detection script installed"
+
+# Harden v4l2-relayd with auto-restart and resolution auto-detection
 echo ""
 echo "[8/13] Hardening v4l2-relayd service..."
 sudo mkdir -p /etc/systemd/system/v4l2-relayd@default.service.d
@@ -222,6 +227,12 @@ StartLimitIntervalSec=60
 StartLimitBurst=10
 
 [Service]
+# Auto-detect camera resolution before starting the relay.
+# The HAL may change its default resolution across updates (e.g. 720p → 1080p),
+# so we probe icamerasrc at startup instead of hardcoding WIDTH/HEIGHT.
+ExecStartPre=/usr/local/sbin/v4l2-relayd-detect-resolution.sh
+EnvironmentFile=-/run/v4l2-relayd-resolution.env
+
 # After the relay connects, re-trigger udev on the loopback device and
 # restart the user's WirePlumber so it re-discovers the device as
 # VIDEO_CAPTURE (v4l2loopback with exclusive_caps=1 only advertises
@@ -312,9 +323,9 @@ fi
 if $SERVICE_OK; then
     if timeout 5 ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 -update 1 -y /tmp/webcam_test.jpg 2>/dev/null; then
         SIZE=$(stat -c%s /tmp/webcam_test.jpg 2>/dev/null || echo 0)
-        if [[ "$SIZE" -gt 1000 ]]; then
+        if [[ "$SIZE" -gt 10000 ]]; then
             CAPTURE_OK=true
-            echo "  ✓ Webcam capture successful (${SIZE} bytes, 1280x720)"
+            echo "  ✓ Webcam capture successful (${SIZE} bytes)"
         fi
     fi
 fi
@@ -325,7 +336,7 @@ if $CAPTURE_OK; then
     echo "  ✅ SUCCESS — Webcam is working!"
     echo ""
     echo "  Device: /dev/video0 (Intel MIPI Camera)"
-    echo "  Format: YUY2, 1280x720, 30fps"
+    echo "  Format: YUY2, auto-detected resolution, 30fps"
     echo ""
     echo "  Test:   mpv av://v4l2:/dev/video0 --profile=low-latency"
     echo ""
@@ -350,6 +361,7 @@ echo "    /etc/v4l2-relayd.d/default.conf"
 echo "    /etc/udev/rules.d/90-hide-ipu6-v4l2.rules"
 echo "    /etc/initramfs-tools/modules (IVSC entries)"
 echo "    /etc/systemd/system/v4l2-relayd@default.service.d/override.conf"
+echo "    /usr/local/sbin/v4l2-relayd-detect-resolution.sh"
 echo "    /usr/local/sbin/v4l2-relayd-watchdog.sh"
 echo "    /etc/systemd/system/v4l2-relayd-watchdog.service"
 echo "    /etc/systemd/system/v4l2-relayd-watchdog.timer"

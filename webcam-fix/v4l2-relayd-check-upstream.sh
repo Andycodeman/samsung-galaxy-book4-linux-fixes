@@ -103,6 +103,10 @@ fi
 rm -f /etc/udev/rules.d/90-hide-ipu6-v4l2.rules
 udevadm control --reload-rules 2>/dev/null || true
 
+# Remove resolution detection script and runtime env
+rm -f /usr/local/sbin/v4l2-relayd-detect-resolution.sh
+rm -f /run/v4l2-relayd-resolution.env
+
 # Remove watchdog files
 rm -f /usr/local/sbin/v4l2-relayd-watchdog.sh
 rm -f /etc/systemd/system/v4l2-relayd-watchdog.service
