@@ -65,7 +65,7 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 > **Secure Boot:** Most laptops have Secure Boot enabled. If you've never installed a DKMS/out-of-tree kernel module before, you'll need to do a **one-time MOK key enrollment** (reboot + blue screen + password) before the modules will load. See the [full walkthrough](speaker-fix/README.md#secure-boot-setup).
 
-> **Fedora / DNF-based distros:** The install script auto-detects Fedora and configures DKMS module signing using the akmods MOK key (`/etc/pki/akmods/`). If no key exists, it generates one with `kmodgenca` and prompts for enrollment. Confirmed working on Fedora 43, kernel 6.18.9 (Galaxy Book4 Ultra).
+> **Fedora / DNF-based distros:** The install script auto-detects Fedora and configures DKMS module signing using the akmods MOK key (`/etc/pki/akmods/`). If no key exists, it generates one with `kmodgenca` and prompts for enrollment. If modules still won't load after enrollment, check the [Secure Boot signing troubleshooting](speaker-fix/README.md#troubleshooting). Confirmed working on Fedora 43, kernel 6.18.9 (Galaxy Book4 Ultra).
 
 ### [Webcam Fix](webcam-fix/) — Intel IPU6 / OV02C10 (Meteor Lake + Ubuntu only)
 

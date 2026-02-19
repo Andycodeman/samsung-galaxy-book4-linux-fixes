@@ -214,6 +214,14 @@ If Secure Boot is enabled, the DKMS module must be signed. On Fedora, the instal
 1. Enroll the MOK key: `sudo mokutil --import /etc/pki/akmods/certs/public_key.der`
 2. Reboot and complete the enrollment at the blue MOK Manager screen
 
+If modules still won't load after enrollment, verify DKMS knows where your signing keys are:
+
+```bash
+cat /etc/dkms/framework.conf /etc/dkms/framework.conf.d/*.conf 2>/dev/null | grep mok_
+```
+
+If no `mok_signing_key` / `mok_certificate` lines appear, create a drop-in config (see [speaker-fix troubleshooting](../speaker-fix/README.md#troubleshooting) for details).
+
 On Arch with Secure Boot, you'll need to sign the module manually or use a tool like `sbsigntools`.
 
 ---
