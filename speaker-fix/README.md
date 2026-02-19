@@ -286,6 +286,37 @@ systemctl status max98390-hda-i2c-setup.service
 dmesg | grep -i max98390
 ```
 
+**Modules not loading with Secure Boot? ("required key not loaded")**
+
+This means the DKMS modules were built but not signed with your MOK key. Verify the signing config:
+
+```bash
+# Check if DKMS knows where your signing keys are
+cat /etc/dkms/framework.conf /etc/dkms/framework.conf.d/*.conf 2>/dev/null | grep mok_
+
+# You should see lines like:
+# mok_signing_key=/etc/pki/akmods/private/private_key.priv    (Fedora)
+# mok_signing_key=/var/lib/shim-signed/mok/MOK.priv           (Ubuntu)
+```
+
+If no `mok_signing_key` / `mok_certificate` lines appear, create a drop-in config:
+
+```bash
+# Fedora
+sudo mkdir -p /etc/dkms/framework.conf.d
+sudo tee /etc/dkms/framework.conf.d/akmods-keys.conf > /dev/null << 'EOF'
+mok_signing_key=/etc/pki/akmods/private/private_key.priv
+mok_certificate=/etc/pki/akmods/certs/public_key.der
+EOF
+
+# Then rebuild the modules
+sudo dkms remove max98390-hda/1.0 --all
+sudo dkms install max98390-hda/1.0
+sudo reboot
+```
+
+> **Note:** The exact key paths vary by distro. Ubuntu typically uses `/var/lib/shim-signed/mok/MOK.priv` and `MOK.der`. Fedora uses `/etc/pki/akmods/private/private_key.priv` and `public_key.der`. Check which files exist on your system.
+
 **DKMS build fails on kernel update?**
 ```bash
 # Check if headers are installed for the new kernel

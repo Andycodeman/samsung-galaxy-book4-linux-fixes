@@ -312,15 +312,12 @@ EOF
 
         if [[ -f "$MOK_KEY" ]] && [[ -f "$MOK_CERT" ]]; then
             echo "  Configuring DKMS to sign modules with Fedora akmods MOK key..."
-            sudo mkdir -p /etc/dkms
-            if ! grep -q "mok_signing_key" /etc/dkms/framework.conf 2>/dev/null; then
-                sudo tee -a /etc/dkms/framework.conf > /dev/null << SIGNEOF
-
-# Added by Book5 webcam fix installer for Secure Boot module signing
+            sudo mkdir -p /etc/dkms/framework.conf.d
+            sudo tee /etc/dkms/framework.conf.d/akmods-keys.conf > /dev/null << SIGNEOF
+# Fedora akmods MOK key for Secure Boot module signing
 mok_signing_key=${MOK_KEY}
 mok_certificate=${MOK_CERT}
 SIGNEOF
-            fi
 
             if ! mokutil --test-key "$MOK_CERT" 2>/dev/null | grep -q "is already enrolled"; then
                 echo ""

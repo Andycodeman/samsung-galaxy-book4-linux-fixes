@@ -101,16 +101,12 @@ if [ "$PKG_MGR" = "dnf" ] && mokutil --sb-state 2>/dev/null | grep -q "SecureBoo
 
     if [ -f "$MOK_KEY" ] && [ -f "$MOK_CERT" ]; then
         echo "Configuring DKMS to sign modules with Fedora akmods MOK key..."
-        mkdir -p /etc/dkms
-        # Add signing config if not already present
-        if ! grep -q "mok_signing_key" /etc/dkms/framework.conf 2>/dev/null; then
-            cat >> /etc/dkms/framework.conf << SIGNEOF
-
-# Added by max98390-hda installer for Secure Boot module signing
+        mkdir -p /etc/dkms/framework.conf.d
+        cat > /etc/dkms/framework.conf.d/akmods-keys.conf << SIGNEOF
+# Fedora akmods MOK key for Secure Boot module signing
 mok_signing_key=${MOK_KEY}
 mok_certificate=${MOK_CERT}
 SIGNEOF
-        fi
 
         # Check if the key is already enrolled
         if ! mokutil --test-key "$MOK_CERT" 2>/dev/null | grep -q "is already enrolled"; then
