@@ -524,17 +524,46 @@ else
     IPA_PATH="/usr/lib/libcamera/ipa"
 fi
 
+# Detect SPA plugin path for source-built PipeWire (Ubuntu)
+# PipeWire's libcamera SPA plugin must be discoverable for PipeWire to
+# expose the camera to apps (Firefox, Zoom, etc.). Source builds install
+# to /usr/local which PipeWire's systemd service doesn't search by default.
+SPA_PATH=""
+if [[ "$DISTRO" == "ubuntu" ]]; then
+    SPA_PLUGIN=$(find /usr/local/lib -path "*/spa-*/libcamera/libspa-libcamera.so" 2>/dev/null | head -1)
+    if [[ -n "$SPA_PLUGIN" ]]; then
+        # Extract the spa-0.2 directory (parent of libcamera/)
+        SPA_PATH=$(dirname "$(dirname "$SPA_PLUGIN")")
+        echo "  Found PipeWire libcamera SPA plugin at: ${SPA_PLUGIN}"
+        echo "  Setting SPA_PLUGIN_DIR=${SPA_PATH}"
+    fi
+fi
+
 # systemd user environment
 sudo mkdir -p /etc/environment.d
-sudo tee /etc/environment.d/libcamera-ipa.conf > /dev/null << EOF
+if [[ -n "$SPA_PATH" ]]; then
+    sudo tee /etc/environment.d/libcamera-ipa.conf > /dev/null << EOF
+LIBCAMERA_IPA_MODULE_PATH=${IPA_PATH}
+SPA_PLUGIN_DIR=${SPA_PATH}
+EOF
+else
+    sudo tee /etc/environment.d/libcamera-ipa.conf > /dev/null << EOF
 LIBCAMERA_IPA_MODULE_PATH=${IPA_PATH}
 EOF
+fi
 echo "  ✓ Created /etc/environment.d/libcamera-ipa.conf"
 
 # Non-systemd shell sessions
-sudo tee /etc/profile.d/libcamera-ipa.sh > /dev/null << EOF
+if [[ -n "$SPA_PATH" ]]; then
+    sudo tee /etc/profile.d/libcamera-ipa.sh > /dev/null << EOF
+export LIBCAMERA_IPA_MODULE_PATH=${IPA_PATH}
+export SPA_PLUGIN_DIR=${SPA_PATH}
+EOF
+else
+    sudo tee /etc/profile.d/libcamera-ipa.sh > /dev/null << EOF
 export LIBCAMERA_IPA_MODULE_PATH=${IPA_PATH}
 EOF
+fi
 echo "  ✓ Created /etc/profile.d/libcamera-ipa.sh"
 
 # ──────────────────────────────────────────────

@@ -121,6 +121,16 @@ Some Samsung Galaxy Book5 models (940XHA, 960XHA) have the OV02E10 sensor mounte
 
 If you still see a flipped image on a different model, the rotation metadata for that platform may be incorrect or missing.
 
+### Browsers / apps don't see the camera (Ubuntu source builds)
+
+On Ubuntu, if you built PipeWire and libcamera from source (installed to `/usr/local`), PipeWire may not find the libcamera SPA plugin. The installer auto-detects this and sets `SPA_PLUGIN_DIR` in `/etc/environment.d/libcamera-ipa.conf`. **A reboot is required** for PipeWire's systemd user service to pick up the new environment variable.
+
+If apps still don't see the camera after reboot, verify PipeWire found the plugin:
+```bash
+wpctl status | grep -A 15 "Video"
+# Should show a libcamera device, not just v4l2 entries
+```
+
 ### Firefox / browser conflicts with qcam
 
 One user reported that opening the camera in Firefox kills the image in qcam, requiring a reboot to recover. This appears to be a resource contention issue between PipeWire and direct libcamera access. Avoid running qcam and browser-based camera access simultaneously.
@@ -181,8 +191,8 @@ The install script creates these files:
 |------|---------|
 | `/etc/modules-load.d/intel-ipu7-camera.conf` | Load LJCA + intel_cvs modules at boot |
 | `/etc/modprobe.d/intel-ipu7-camera.conf` | Softdep: LJCA -> intel_cvs -> sensor load order |
-| `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH (systemd sessions) |
-| `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH (login shells) |
+| `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (systemd sessions) |
+| `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (login shells) |
 | `/usr/src/vision-driver-1.0.0/` | DKMS source for intel_cvs module |
 | `/usr/src/ipu-bridge-fix-1.0/` | DKMS source for patched ipu-bridge (Samsung 940XHA/960XHA only) |
 | `/usr/local/sbin/ipu-bridge-check-upstream.sh` | Auto-removes ipu-bridge DKMS when upstream kernel has the fix |
