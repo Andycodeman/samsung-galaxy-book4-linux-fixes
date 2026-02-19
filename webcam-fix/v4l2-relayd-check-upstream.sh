@@ -72,7 +72,7 @@ fi
 log "=== NATIVE SUPPORT DETECTED in $(uname -r) ==="
 log "Auto-removing v4l2-relayd workaround..."
 
-# Stop relay and watchdog
+# Stop relay (and legacy watchdog if present)
 systemctl stop v4l2-relayd@default 2>/dev/null || true
 systemctl stop v4l2-relayd-watchdog.timer 2>/dev/null || true
 systemctl disable v4l2-relayd 2>/dev/null || true

@@ -39,8 +39,8 @@ sudo rm -rf /etc/systemd/system/v4l2-relayd@default.service.d
 sudo systemctl daemon-reload
 echo "  ✓ Systemd overrides removed"
 
-# Remove watchdog
-echo "[4/9] Removing relay health watchdog..."
+# Remove watchdog (legacy) and resolution detection
+echo "[4/9] Removing watchdog and resolution detection..."
 sudo systemctl stop v4l2-relayd-watchdog.timer 2>/dev/null || true
 sudo systemctl disable v4l2-relayd-watchdog.timer 2>/dev/null || true
 sudo systemctl stop v4l2-relayd-watchdog.service 2>/dev/null || true
