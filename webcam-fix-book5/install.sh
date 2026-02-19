@@ -39,7 +39,7 @@ echo "=============================================="
 echo ""
 
 # ──────────────────────────────────────────────
-# [1/11] Root check
+# [1/12] Root check
 # ──────────────────────────────────────────────
 if [[ $EUID -eq 0 ]]; then
     echo "ERROR: Don't run this as root. The script will use sudo where needed."
@@ -47,9 +47,9 @@ if [[ $EUID -eq 0 ]]; then
 fi
 
 # ──────────────────────────────────────────────
-# [2/11] Distro detection
+# [2/12] Distro detection
 # ──────────────────────────────────────────────
-echo "[2/11] Detecting distro..."
+echo "[2/12] Detecting distro..."
 if command -v pacman >/dev/null 2>&1; then
     DISTRO="arch"
     echo "  ✓ Arch-based distro detected"
@@ -94,10 +94,10 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# [3/11] Hardware detection
+# [3/12] Hardware detection
 # ──────────────────────────────────────────────
 echo ""
-echo "[3/11] Verifying hardware..."
+echo "[3/12] Verifying hardware..."
 
 # Check for Lunar Lake IPU7
 IPU7_FOUND=false
@@ -148,10 +148,10 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# [4/11] Kernel version check
+# [4/12] Kernel version check
 # ──────────────────────────────────────────────
 echo ""
-echo "[4/11] Checking kernel version..."
+echo "[4/12] Checking kernel version..."
 KVER=$(uname -r)
 KMAJOR=$(echo "$KVER" | cut -d. -f1)
 KMINOR=$(echo "$KVER" | cut -d. -f2)
@@ -173,10 +173,10 @@ fi
 echo "  ✓ Kernel ${KVER} (>= 6.18 required)"
 
 # ──────────────────────────────────────────────
-# [5/11] Install distro packages
+# [5/12] Install distro packages
 # ──────────────────────────────────────────────
 echo ""
-echo "[5/11] Installing required packages..."
+echo "[5/12] Installing required packages..."
 
 if [[ "$DISTRO" == "arch" ]]; then
     # Check what's missing
@@ -246,10 +246,10 @@ elif [[ "$DISTRO" == "ubuntu" ]]; then
 fi
 
 # ──────────────────────────────────────────────
-# [6/11] Build intel-vision-drivers via DKMS
+# [6/12] Build intel-vision-drivers via DKMS
 # ──────────────────────────────────────────────
 echo ""
-echo "[6/11] Installing intel_cvs module via DKMS..."
+echo "[6/12] Installing intel_cvs module via DKMS..."
 
 # Check if already installed and working
 if dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "installed"; then
@@ -369,10 +369,10 @@ SIGNEOF
 fi
 
 # ──────────────────────────────────────────────
-# [7/11] Samsung camera rotation fix (ipu-bridge DKMS)
+# [7/12] Samsung camera rotation fix (ipu-bridge DKMS)
 # ──────────────────────────────────────────────
 echo ""
-echo "[7/11] Installing ipu-bridge camera rotation fix..."
+echo "[7/12] Installing ipu-bridge camera rotation fix..."
 
 # Samsung Galaxy Book5 Pro models (940XHA, 960XHA) have their OV02E10 sensor
 # mounted upside-down, but Samsung's BIOS reports rotation=0. The kernel's
@@ -464,10 +464,10 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# [8/11] Module load configuration
+# [8/12] Module load configuration
 # ──────────────────────────────────────────────
 echo ""
-echo "[8/11] Configuring module loading..."
+echo "[8/12] Configuring module loading..."
 
 # The full module chain for IPU7 camera on Lunar Lake:
 # usb_ljca -> gpio_ljca -> intel_cvs -> ov02c10/ov02e10
@@ -497,10 +497,10 @@ EOF
 echo "  ✓ Created /etc/modprobe.d/intel-ipu7-camera.conf"
 
 # ──────────────────────────────────────────────
-# [9/11] libcamera IPA module path
+# [9/12] libcamera IPA module path
 # ──────────────────────────────────────────────
 echo ""
-echo "[9/11] Configuring libcamera environment..."
+echo "[9/12] Configuring libcamera environment..."
 
 # Determine IPA path based on distro
 if [[ "$DISTRO" == "fedora" ]]; then
@@ -567,10 +567,49 @@ fi
 echo "  ✓ Created /etc/profile.d/libcamera-ipa.sh"
 
 # ──────────────────────────────────────────────
-# [10/11] Load modules and test
+# [10/12] Hide raw IPU7 V4L2 nodes from PipeWire
 # ──────────────────────────────────────────────
 echo ""
-echo "[10/11] Loading modules and testing..."
+echo "[10/12] Configuring WirePlumber to hide raw IPU7 V4L2 nodes..."
+
+# IPU7 exposes 32 raw V4L2 capture nodes that output bayer data unusable by
+# apps. Without this rule, PipeWire creates 32 "ipu7" camera sources that
+# flood app camera lists and produce garbled images. libcamera handles the
+# actual camera pipeline separately — this only suppresses the V4L2 monitor.
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
+WP_RULE_INSTALLED=false
+
+# WirePlumber 0.5+ uses JSON conf files in wireplumber.conf.d/
+if [[ -d /etc/wireplumber/wireplumber.conf.d ]] || \
+   wireplumber --version 2>/dev/null | grep -qP '0\.[5-9]|[1-9]\.' 2>/dev/null; then
+    sudo mkdir -p /etc/wireplumber/wireplumber.conf.d
+    sudo cp "$SCRIPT_DIR/50-disable-ipu7-v4l2.conf" \
+        /etc/wireplumber/wireplumber.conf.d/50-disable-ipu7-v4l2.conf
+    echo "  ✓ Installed WirePlumber 0.5+ rule (wireplumber.conf.d/)"
+    WP_RULE_INSTALLED=true
+fi
+
+# WirePlumber 0.4 uses Lua scripts in main.lua.d/
+if [[ -d /etc/wireplumber/main.lua.d ]] || \
+   [[ -d /usr/share/wireplumber/main.lua.d ]]; then
+    sudo mkdir -p /etc/wireplumber/main.lua.d
+    sudo cp "$SCRIPT_DIR/50-disable-ipu7-v4l2.lua" \
+        /etc/wireplumber/main.lua.d/51-disable-ipu7-v4l2.lua
+    echo "  ✓ Installed WirePlumber 0.4 rule (main.lua.d/)"
+    WP_RULE_INSTALLED=true
+fi
+
+if ! $WP_RULE_INSTALLED; then
+    echo "  ⚠ Could not detect WirePlumber config directory"
+    echo "    Apps may show 32 raw IPU7 camera entries instead of the libcamera source"
+fi
+
+# ──────────────────────────────────────────────
+# [11/12] Load modules and test
+# ──────────────────────────────────────────────
+echo ""
+echo "[11/12] Loading modules and testing..."
 
 # Try to load LJCA and intel_cvs now
 for mod in usb_ljca gpio_ljca; do
@@ -609,7 +648,7 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# [11/11] Summary
+# [12/12] Summary
 # ──────────────────────────────────────────────
 echo ""
 echo "=============================================="

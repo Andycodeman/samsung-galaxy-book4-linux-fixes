@@ -191,6 +191,8 @@ The install script creates these files:
 |------|---------|
 | `/etc/modules-load.d/intel-ipu7-camera.conf` | Load LJCA + intel_cvs modules at boot |
 | `/etc/modprobe.d/intel-ipu7-camera.conf` | Softdep: LJCA -> intel_cvs -> sensor load order |
+| `/etc/wireplumber/wireplumber.conf.d/50-disable-ipu7-v4l2.conf` | Hide raw IPU7 V4L2 nodes from PipeWire (WirePlumber 0.5+) |
+| `/etc/wireplumber/main.lua.d/51-disable-ipu7-v4l2.lua` | Hide raw IPU7 V4L2 nodes from PipeWire (WirePlumber 0.4) |
 | `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (systemd sessions) |
 | `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (login shells) |
 | `/usr/src/vision-driver-1.0.0/` | DKMS source for intel_cvs module |
