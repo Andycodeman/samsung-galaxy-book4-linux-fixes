@@ -17,8 +17,6 @@ The Samsung Galaxy Book5 (Lunar Lake) webcam doesn't work on Linux because:
 1. **Missing `intel_cvs` kernel module** — The Intel Computer Vision Subsystem (CVS) module is required to power the camera sensor on IPU7, but it's not yet in the mainline kernel. Intel provides it via DKMS from their [vision-drivers](https://github.com/intel/vision-drivers) repo.
 2. **LJCA modules don't auto-load** — The Lunar Lake Joint Controller for Accessories (`usb_ljca`, `gpio_ljca`) provides GPIO/USB control needed by the vision subsystem. These must load before `intel_cvs` and the sensor, but aren't auto-loaded on all systems.
 3. **Missing userspace pipeline** — IPU7 uses libcamera (not the IPU6 camera HAL). The `pipewire-libcamera` plugin connects libcamera to PipeWire so apps can access the camera.
-4. **Raw IPU7 video nodes exposed** — IPU7 creates multiple `/dev/video*` nodes that confuse apps enumerating cameras. These need to be hidden via udev.
-
 This installer packages all of those pieces into a single script.
 
 ---
