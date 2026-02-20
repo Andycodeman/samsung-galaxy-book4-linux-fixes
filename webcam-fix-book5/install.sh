@@ -638,17 +638,14 @@ for dir in /usr/local/share/libcamera/ipa/simple \
 done
 
 if [[ -n "$TUNING_DIR" ]]; then
-    if [[ -f "$TUNING_DIR/$TUNING_FILE" ]]; then
-        echo "  ✓ Sensor tuning file already exists ($TUNING_DIR/$TUNING_FILE)"
+    SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+    if [[ -f "$SCRIPT_DIR/$TUNING_FILE" ]]; then
+        sudo cp "$SCRIPT_DIR/$TUNING_FILE" "$TUNING_DIR/$TUNING_FILE"
+        echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/"
+        echo "    (light CCM for color correction — not a full sensor calibration)"
+        echo "    Use ./tune-ccm.sh to interactively find the best color preset"
     else
-        SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-        if [[ -f "$SCRIPT_DIR/$TUNING_FILE" ]]; then
-            sudo cp "$SCRIPT_DIR/$TUNING_FILE" "$TUNING_DIR/$TUNING_FILE"
-            echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/"
-            echo "    (light CCM for color correction — not a full sensor calibration)"
-        else
-            echo "  ⚠ Tuning file $TUNING_FILE not found in installer directory"
-        fi
+        echo "  ⚠ Tuning file $TUNING_FILE not found in installer directory"
     fi
 else
     echo "  ⚠ Could not find libcamera IPA data directory"

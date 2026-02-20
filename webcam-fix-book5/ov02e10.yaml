@@ -2,19 +2,9 @@
 # Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
 # Used by libcamera's Simple pipeline handler / Software ISP
 #
-# The default uncalibrated.yaml has no CCM (color correction matrix),
-# which produces a near-grayscale image. The OV02E10 sensor has a
-# red+blue bias that causes a purple tint with symmetric CCMs, so
-# this file boosts green more than R/B to compensate.
-#
-# This is NOT a proper sensor calibration — use tune-ccm.sh to
-# interactively find the best preset for your lighting conditions.
-# Proper per-sensor tuning files are being developed upstream by
-# the libcamera project.
-#
-# To adjust manually: edit values below, keeping each row summing
-# to 1.0 (preserves neutral greys). Restart PipeWire after changes:
-#   systemctl --user restart pipewire wireplumber
+# The OV02E10 has a red+blue bias that causes a purple tint with
+# symmetric CCMs. This file boosts green more than R/B to compensate.
+# Use tune-ccm.sh to interactively find the best color preset.
 %YAML 1.1
 ---
 version: 1
@@ -23,14 +13,10 @@ algorithms:
   - Awb:
   - Ccm:
       ccms:
-        - ct: 3000
-          ccm: [ 1.0,  0.0,  0.0,
-                -0.2,  1.4, -0.2,
-                 0.0,  0.0,  1.0 ]
-        - ct: 6500
+        - ct: 5000
           ccm: [ 1.05, -0.025, -0.025,
-                -0.1,   1.3,   -0.2,
-                -0.025, -0.025,  1.05 ]
+                -0.1, 1.3, -0.2,
+                -0.025, -0.025, 1.05 ]
   - Adjust:
   - Agc:
 ...

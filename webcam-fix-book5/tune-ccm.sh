@@ -54,10 +54,17 @@ cleanup() {
     # Kill qcam if we started it
     if [[ -n "$QCAM_PID" ]] && kill -0 "$QCAM_PID" 2>/dev/null; then
         kill "$QCAM_PID" 2>/dev/null
-        wait "$QCAM_PID" 2>/dev/null
+        wait "$QCAM_PID" 2>/dev/null || true
+    fi
+    # Restore backup if user didn't explicitly save (Ctrl+C, error, etc.)
+    if [[ $SELECTED -lt 0 && -n "$BACKUP" && -f "$BACKUP" ]]; then
+        sudo cp "$BACKUP" "$TUNING_FILE"
+        sudo rm -f "$BACKUP"
+        echo ""
+        echo "  Interrupted — restored original tuning file."
     fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # ─── CCM Presets ───────────────────────────────────────────────
 # Each preset: NAME|DESCRIPTION|YAML_CONTENT
