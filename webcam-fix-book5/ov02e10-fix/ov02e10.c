@@ -3,23 +3,32 @@
 //
 // *** PATCHED by samsung-galaxy-book4-linux-fixes ***
 //
-// Fix: Correct bayer pattern reporting when flip controls are active.
+// Fix: Remove V4L2_CTRL_FLAG_MODIFY_LAYOUT from flip controls.
 //
-// Problem: The mainline ov02e10 driver always reports MEDIA_BUS_FMT_SGRBG10
-// regardless of the hflip/vflip state. When the sensor readout is flipped
-// (e.g. because ipu-bridge reports rotation=180 for upside-down Samsung
-// sensors), the physical bayer pattern shifts by one pixel in each flipped
-// direction. Without updating the reported format code, libcamera's
-// debayering algorithm interprets wrong color channels -> purple/magenta tint.
+// Problem: The mainline ov02e10 driver sets V4L2_CTRL_FLAG_MODIFY_LAYOUT on
+// the hflip/vflip controls. This flag tells libcamera "I will report the
+// correct bayer format code after flips are applied." But the driver NEVER
+// updates the format code — it always reports MEDIA_BUS_FMT_SGRBG10_1X10
+// regardless of flip state.
 //
-// Fix approach: Add a bayer_order lookup table (same pattern used by ov4689,
-// ov5647, imx214 etc. in mainline). The driver reports the correct bayer
-// format code based on current [vflip][hflip] state. This is the standard
-// kernel approach when a sensor's ISP doesn't have crop-window compensation
-// (unlike ov02c10 which uses ISP X/Y window registers to preserve bayer
-// pattern across flips).
+// When ipu-bridge reports rotation=180 for Samsung laptops, libcamera sets
+// hflip=1 + vflip=1 on the sensor. The physical bayer pattern shifts from
+// SGRBG to SGBRG, but the driver still reports SGRBG. Because MODIFY_LAYOUT
+// is set, libcamera trusts the (wrong) driver-reported code and debayers
+// with the wrong pattern → purple/magenta tint.
 //
-// This DKMS module auto-removes when the upstream kernel includes the fix.
+// Fix approach: Remove V4L2_CTRL_FLAG_MODIFY_LAYOUT. Without this flag,
+// libcamera knows the driver won't update the format code, so it applies
+// BayerFormat::transform() itself based on the flips it requested.
+// SGRBG + hflip + vflip = SGBRG → correct debayering → correct colors.
+//
+// This also avoids the EPIPE (Broken pipe) error that occurred with the
+// bayer_order lookup table approach: that approach made get_format() return
+// a flip-dependent code, but the downstream CSI2 entity still had the old
+// code negotiated during pipeline setup → v4l2_subdev_link_validate()
+// detected the mismatch → -EPIPE.
+//
+// This DKMS module auto-removes when the upstream kernel includes a fix.
 // See: ipu-bridge-check-upstream.sh
 
 #include <linux/acpi.h>
@@ -97,23 +106,6 @@
 #define OV02E10_REG_TEST_PATTERN	CCI_REG8(0x12)
 #define OV02E10_TEST_PATTERN_ENABLE	BIT(0)
 #define OV02E10_TEST_PATTERN_BAR_SHIFT	1
-
-/*
- * Bayer order varies with flip settings. When the sensor readout is flipped,
- * the 2x2 bayer pattern shifts by one pixel in the corresponding direction.
- * Index as: ov02e10_bayer_order[vflip][hflip]
- *
- * Default (no flip) is SGRBG:
- *   G R      hflip ->  R G      vflip ->  B G      both ->  G B
- *   B G                G B                G R               R G
- *   SGRBG              SRGGB              SBGGR             SGBRG
- */
-static const u32 ov02e10_bayer_order[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,	/* [0][0] no flip */
-	MEDIA_BUS_FMT_SRGGB10_1X10,	/* [0][1] hflip */
-	MEDIA_BUS_FMT_SBGGR10_1X10,	/* [1][0] vflip */
-	MEDIA_BUS_FMT_SGBRG10_1X10,	/* [1][1] hflip + vflip */
-};
 
 struct reg_sequence_list {
 	u32 num_regs;
@@ -297,22 +289,6 @@ static inline struct ov02e10 *to_ov02e10(struct v4l2_subdev *subdev)
 	return container_of(subdev, struct ov02e10, sd);
 }
 
-/*
- * Return the correct bayer format code based on current flip state.
- * Must be called with controls lock held (or before controls are accessible).
- */
-static u32 ov02e10_get_format_code(struct ov02e10 *ov02e10)
-{
-	unsigned int index;
-
-	lockdep_assert_held(ov02e10->ctrl_handler.lock);
-
-	index = (ov02e10->vflip->val ? 2 : 0) |
-		(ov02e10->hflip->val ? 1 : 0);
-
-	return ov02e10_bayer_order[index];
-}
-
 static u64 to_pixel_rate(u32 f_index)
 {
 	u64 pixel_rate = link_freq_menu_items[f_index] * 2 * OV02E10_DATA_LANES;
@@ -338,16 +314,6 @@ static void ov02e10_test_pattern(struct ov02e10 *ov02e10, u32 pattern, int *pret
 			  OV02E10_TEST_PATTERN_ENABLE;
 
 	cci_write(ov02e10->regmap, OV02E10_REG_TEST_PATTERN, pattern, pret);
-}
-
-static void ov02e10_update_pad_format(const struct ov02e10_mode *mode,
-				      struct v4l2_mbus_framefmt *fmt,
-				      u32 code)
-{
-	fmt->width = mode->width;
-	fmt->height = mode->height;
-	fmt->code = code;
-	fmt->field = V4L2_FIELD_NONE;
 }
 
 static int ov02e10_set_ctrl(struct v4l2_ctrl *ctrl)
@@ -493,13 +459,21 @@ static int ov02e10_init_controls(struct ov02e10 *ov02e10)
 
 	ov02e10->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &ov02e10_ctrl_ops,
 					   V4L2_CID_HFLIP, 0, 1, 1, 0);
-	if (ov02e10->hflip)
-		ov02e10->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+	/*
+	 * Don't set V4L2_CTRL_FLAG_MODIFY_LAYOUT on flip controls.
+	 *
+	 * The mainline driver sets this flag but never updates the reported
+	 * media bus format code when flips change. With MODIFY_LAYOUT set,
+	 * libcamera trusts the driver to report the correct bayer pattern
+	 * after flips — but it doesn't, causing wrong debayering (purple tint).
+	 *
+	 * Without the flag, libcamera applies BayerFormat::transform() itself
+	 * based on the requested flips, producing the correct bayer pattern
+	 * for the Software ISP debayer.
+	 */
 
 	ov02e10->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &ov02e10_ctrl_ops,
 					   V4L2_CID_VFLIP, 0, 1, 1, 0);
-	if (ov02e10->vflip)
-		ov02e10->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &ov02e10_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -518,6 +492,15 @@ static int ov02e10_init_controls(struct ov02e10 *ov02e10)
 	ov02e10->sd.ctrl_handler = ctrl_hdlr;
 
 	return 0;
+}
+
+static void ov02e10_update_pad_format(const struct ov02e10_mode *mode,
+				      struct v4l2_mbus_framefmt *fmt)
+{
+	fmt->width = mode->width;
+	fmt->height = mode->height;
+	fmt->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	fmt->field = V4L2_FIELD_NONE;
 }
 
 static int ov02e10_set_stream_mode(struct ov02e10 *ov02e10, u8 val)
@@ -650,7 +633,6 @@ static int ov02e10_set_format(struct v4l2_subdev *sd,
 {
 	struct ov02e10 *ov02e10 = to_ov02e10(sd);
 	const struct ov02e10_mode *mode;
-	u32 code;
 	s32 vblank_def, h_blank;
 	int ret = 0;
 
@@ -659,8 +641,7 @@ static int ov02e10_set_format(struct v4l2_subdev *sd,
 				      width, height, fmt->format.width,
 				      fmt->format.height);
 
-	code = ov02e10_get_format_code(ov02e10);
-	ov02e10_update_pad_format(mode, &fmt->format, code);
+	ov02e10_update_pad_format(mode, &fmt->format);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 		*v4l2_subdev_state_get_format(sd_state, fmt->pad) = fmt->format;
@@ -704,13 +685,10 @@ static int ov02e10_get_format(struct v4l2_subdev *sd,
 {
 	struct ov02e10 *ov02e10 = to_ov02e10(sd);
 
-	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
 		fmt->format = *v4l2_subdev_state_get_format(sd_state, fmt->pad);
-	} else {
-		u32 code = ov02e10_get_format_code(ov02e10);
-
-		ov02e10_update_pad_format(ov02e10->cur_mode, &fmt->format, code);
-	}
+	else
+		ov02e10_update_pad_format(ov02e10->cur_mode, &fmt->format);
 
 	return 0;
 }
@@ -719,15 +697,10 @@ static int ov02e10_enum_mbus_code(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *sd_state,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
-	/*
-	 * Enumerate all 4 bayer patterns — the active one depends on flip
-	 * state. libcamera reads the current format via get_format() which
-	 * returns the correct code for the current flip configuration.
-	 */
-	if (code->index >= ARRAY_SIZE(ov02e10_bayer_order))
+	if (code->index > 0)
 		return -EINVAL;
 
-	code->code = ov02e10_bayer_order[code->index];
+	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
 
 	return 0;
 }
@@ -736,19 +709,12 @@ static int ov02e10_enum_frame_size(struct v4l2_subdev *sd,
 				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
-	unsigned int i;
-
 	if (fse->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	/* Accept any of the 4 bayer pattern codes */
-	for (i = 0; i < ARRAY_SIZE(ov02e10_bayer_order); i++) {
-		if (fse->code == ov02e10_bayer_order[i])
-			goto code_ok;
-	}
-	return -EINVAL;
+	if (fse->code != MEDIA_BUS_FMT_SGRBG10_1X10)
+		return -EINVAL;
 
-code_ok:
 	fse->min_width = supported_modes[fse->index].width;
 	fse->max_width = fse->min_width;
 	fse->min_height = supported_modes[fse->index].height;
@@ -760,10 +726,8 @@ code_ok:
 static int ov02e10_init_state(struct v4l2_subdev *sd,
 			      struct v4l2_subdev_state *sd_state)
 {
-	/* Default state: no flip -> SGRBG */
 	ov02e10_update_pad_format(&supported_modes[0],
-				  v4l2_subdev_state_get_format(sd_state, 0),
-				  MEDIA_BUS_FMT_SGRBG10_1X10);
+				  v4l2_subdev_state_get_format(sd_state, 0));
 
 	return 0;
 }
@@ -1026,5 +990,5 @@ MODULE_AUTHOR("Jingjing Xiong");
 MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
 MODULE_AUTHOR("Alan Stern <stern@rowland.harvard.edu>");
 MODULE_AUTHOR("Bryan O'Donoghue <bryan.odonoghue@linaro.org>");
-MODULE_DESCRIPTION("OmniVision OV02E10 sensor driver (bayer pattern fix)");
+MODULE_DESCRIPTION("OmniVision OV02E10 sensor driver (MODIFY_LAYOUT fix)");
 MODULE_LICENSE("GPL");

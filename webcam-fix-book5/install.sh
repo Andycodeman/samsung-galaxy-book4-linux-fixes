@@ -463,23 +463,22 @@ SIGNEOF
     sudo systemctl enable ipu-bridge-check-upstream.service
     echo "  ✓ Upstream check service enabled (auto-removes fix when kernel catches up)"
 
-    # ── OV02E10 bayer pattern fix (paired with ipu-bridge rotation fix) ──
+    # ── OV02E10 MODIFY_LAYOUT fix (paired with ipu-bridge rotation fix) ──
     # When ipu-bridge reports rotation=180, libcamera applies hflip+vflip on
-    # the sensor. Flipping changes the bayer readout pattern (SGRBG -> SGBRG),
-    # but the mainline ov02e10 driver always reports SGRBG regardless of flip
-    # state. This causes libcamera to debayer with the wrong color pattern,
-    # producing a purple/magenta tint. This patched driver adds a bayer_order
-    # lookup table so the correct format code is reported for each flip combo.
-    # Same approach used by ov4689, ov5647, imx214 in mainline kernel.
+    # the sensor. The mainline ov02e10 driver sets V4L2_CTRL_FLAG_MODIFY_LAYOUT
+    # on flip controls but never updates the reported bayer format code. This
+    # tells libcamera "I'll report the correct bayer code" but then doesn't,
+    # causing wrong debayering -> purple/magenta tint. Fix: remove the flag
+    # so libcamera applies BayerFormat::transform() itself.
     if [[ "$SENSOR" == "ov02e10" ]] || [[ -z "$SENSOR" ]]; then
         echo ""
-        echo "  Installing ov02e10 bayer pattern fix (prevents purple tint with rotation)..."
+        echo "  Installing ov02e10 MODIFY_LAYOUT fix (prevents purple tint with rotation)..."
 
         if dkms status "ov02e10-fix/${OV02E10_FIX_VER}" 2>/dev/null | grep -q "installed"; then
             echo "  ✓ ov02e10-fix/${OV02E10_FIX_VER} already installed via DKMS"
         else
             # Check if native kernel ov02e10 already has the fix
-            # (look for the bayer_order array — patched driver will have SGBRG format)
+            # Either: MODIFY_LAYOUT removed (our approach) or bayer_order added (alternative)
             NATIVE_OV02E10=$(find "/lib/modules/$(uname -r)/kernel" -name "ov02e10*" 2>/dev/null | head -1)
             OV02E10_UPSTREAM_HAS_FIX=false
             if [ -n "$NATIVE_OV02E10" ]; then
@@ -489,14 +488,13 @@ SIGNEOF
                     *.gz)   DECOMPRESS="zcat" ;;
                     *)      DECOMPRESS="cat" ;;
                 esac
-                # If the native module has SGBRG format code, it has bayer_order support
-                if $DECOMPRESS "$NATIVE_OV02E10" 2>/dev/null | strings | grep -q "bayer_order\|SGBRG"; then
+                if $DECOMPRESS "$NATIVE_OV02E10" 2>/dev/null | strings | grep -q "MODIFY_LAYOUT fix\|bayer_order\|SGBRG"; then
                     OV02E10_UPSTREAM_HAS_FIX=true
                 fi
             fi
 
             if $OV02E10_UPSTREAM_HAS_FIX; then
-                echo "  ✓ Native kernel ov02e10 already has bayer pattern fix — skipping DKMS"
+                echo "  ✓ Native kernel ov02e10 already has MODIFY_LAYOUT fix — skipping DKMS"
             else
                 # Remove old DKMS version if present
                 if dkms status "ov02e10-fix/${OV02E10_FIX_VER}" 2>/dev/null | grep -q "ov02e10-fix"; then
@@ -795,7 +793,7 @@ echo "    /usr/local/sbin/ipu-bridge-check-upstream.sh"
 echo "    /etc/systemd/system/ipu-bridge-check-upstream.service"
 fi
 if [[ -d "$OV02E10_FIX_SRC" ]]; then
-echo "    ${OV02E10_FIX_SRC}/ (ov02e10 bayer pattern fix DKMS source)"
+echo "    ${OV02E10_FIX_SRC}/ (ov02e10 MODIFY_LAYOUT fix DKMS source)"
 fi
 echo ""
 echo "  To uninstall: ./uninstall.sh"

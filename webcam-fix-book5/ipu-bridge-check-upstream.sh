@@ -37,13 +37,17 @@ if ! decompress_module "$NATIVE_MODULE" | strings | grep -q "940XHA"; then
     exit 0
 fi
 
-# --- Also check if the native ov02e10 module has the bayer pattern fix ---
+# --- Also check if the native ov02e10 module has the MODIFY_LAYOUT fix ---
+# The mainline bug: V4L2_CTRL_FLAG_MODIFY_LAYOUT set on flip controls but
+# format code never updated. Fix is either:
+#   a) Remove MODIFY_LAYOUT (our approach) — detectable by module description
+#   b) Add proper bayer_order support — detectable by "SGBRG" string
 OV02E10_DKMS_NAME="ov02e10-fix"
 OV02E10_DKMS_VER="1.0"
 OV02E10_NATIVE=$(find "/lib/modules/$(uname -r)/kernel" -name "ov02e10*" 2>/dev/null | head -1)
 OV02E10_UPSTREAM_FIXED=false
 if [ -n "$OV02E10_NATIVE" ]; then
-    if decompress_module "$OV02E10_NATIVE" | strings | grep -q "bayer_order\|SGBRG"; then
+    if decompress_module "$OV02E10_NATIVE" | strings | grep -q "MODIFY_LAYOUT fix\|bayer_order\|SGBRG"; then
         OV02E10_UPSTREAM_FIXED=true
     fi
 fi
