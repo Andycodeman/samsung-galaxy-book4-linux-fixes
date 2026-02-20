@@ -263,8 +263,12 @@ read -r -p "Press Enter to start..." _
 
 apply_preset() {
     local idx=$1
-    local IFS='|'
-    read -r name desc yaml <<< "${PRESETS[$idx]}"
+    local entry="${PRESETS[$idx]}"
+    # Extract fields using parameter expansion (read only handles one line)
+    local name="${entry%%|*}"
+    local rest="${entry#*|}"
+    local desc="${rest%%|*}"
+    local yaml="${rest#*|}"
 
     echo ""
     echo "──────────────────────────────────────────────"
@@ -335,7 +339,7 @@ fi
 
 echo ""
 if [[ $SELECTED -ge 0 ]]; then
-    IFS='|' read -r name _ _ <<< "${PRESETS[$SELECTED]}"
+    name="${PRESETS[$SELECTED]%%|*}"
     echo "=============================================="
     echo "  Saved: $name"
     echo "  File:  $TUNING_FILE"
