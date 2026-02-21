@@ -55,7 +55,25 @@ if command -v pacman >/dev/null 2>&1; then
     echo "  ✓ Arch-based distro detected"
 elif command -v dnf >/dev/null 2>&1; then
     DISTRO="fedora"
-    echo "  ✓ Fedora detected"
+    # Check libcamera version — IPU7 + ov02e10 requires 0.6+ for proper
+    # Simple pipeline handler support, sensor helpers, and Software ISP.
+    # Fedora 44 ships 0.7.0; Fedora 43 ships 0.5.2 which is too old.
+    LIBCAMERA_VER=$(ls -l /usr/lib64/libcamera.so.* /usr/lib/libcamera.so.* 2>/dev/null \
+        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | head -1 || true)
+    if [[ -n "$LIBCAMERA_VER" ]]; then
+        LIBCAMERA_MAJOR=$(echo "$LIBCAMERA_VER" | cut -d. -f1)
+        LIBCAMERA_MINOR=$(echo "$LIBCAMERA_VER" | cut -d. -f2)
+        if [[ "$LIBCAMERA_MAJOR" -eq 0 ]] && [[ "$LIBCAMERA_MINOR" -lt 6 ]]; then
+            echo "ERROR: libcamera ${LIBCAMERA_VER} is too old. IPU7 requires libcamera 0.6+."
+            echo ""
+            echo "       Fedora 44+ ships libcamera 0.7.0 which supports IPU7."
+            echo "       Upgrade with: sudo dnf upgrade --releasever=44"
+            exit 1
+        fi
+        echo "  ✓ Fedora detected with libcamera ${LIBCAMERA_VER} (>= 0.6 required)"
+    else
+        echo "  ✓ Fedora detected (libcamera version will be checked after package install)"
+    fi
 elif command -v apt >/dev/null 2>&1; then
     DISTRO="ubuntu"
     # Ubuntu doesn't ship libcamera 0.6+ (needed for IPU7) in its repos.
@@ -621,12 +639,9 @@ echo "[11/13] Installing libcamera color tuning file..."
 
 # libcamera's Software ISP uses uncalibrated.yaml by default, which has no
 # color correction matrix (CCM) — producing near-grayscale or green-tinted
-# images. We install a sensor-specific tuning file with a CCM that restores
-# reasonable color. For OV02E10 on Samsung (rotation=180), the CCM also
-# includes an R↔B channel swap to compensate for the mainline driver's
-# bayer pattern bug (MODIFY_LAYOUT set but format code never updated).
-# libcamera looks for <sensor>.yaml first, so this doesn't modify the
-# system's uncalibrated.yaml.
+# images. We install a sensor-specific tuning file with a light CCM that
+# restores reasonable color. libcamera looks for <sensor>.yaml first, so
+# this doesn't modify the system's uncalibrated.yaml.
 
 TUNING_SENSOR="${SENSOR:-ov02e10}"
 TUNING_FILE="${TUNING_SENSOR}.yaml"

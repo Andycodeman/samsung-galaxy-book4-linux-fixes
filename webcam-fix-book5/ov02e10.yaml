@@ -2,14 +2,8 @@
 # Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
 # Used by libcamera's Simple pipeline handler / Software ISP
 #
-# Samsung Galaxy Book5 (940XHA/960XHA): the sensor is mounted upside-down
-# but the mainline ov02e10 driver has a bug — it sets MODIFY_LAYOUT on flip
-# controls but never updates the bayer format code. libcamera's Simple
-# pipeline handler never calls bayerOrder() because the code doesn't change.
-# Result: debayer uses SGRBG pattern on SGBRG data, swapping R and B channels.
-#
-# Fix: This CCM swaps R↔B columns to compensate, restoring correct colors.
-# The matrix is the green-boost CCM with columns 1 and 3 exchanged.
+# The OV02E10 has no calibration data in libcamera yet. This file provides
+# a basic CCM that boosts green relative to R/B to improve color balance.
 # Use tune-ccm.sh to interactively find the best color preset.
 %YAML 1.1
 ---
@@ -20,9 +14,9 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.025, -0.025,  1.05,
-                -0.2,    1.3,   -0.1,
-                 1.05,  -0.025, -0.025 ]
+          ccm: [ 1.05, -0.025, -0.025,
+                -0.1, 1.3, -0.2,
+                -0.025, -0.025, 1.05 ]
   - Adjust:
   - Agc:
 ...

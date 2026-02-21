@@ -69,14 +69,8 @@ trap cleanup EXIT INT TERM
 # ─── CCM Presets ───────────────────────────────────────────────
 # Each preset: NAME|DESCRIPTION|YAML_CONTENT
 # Rows must sum to 1.0 to preserve neutral greys.
-#
-# Samsung OV02E10 R↔B swap: The mainline ov02e10 driver has a bug where
-# MODIFY_LAYOUT is set on flip controls but the bayer format code is never
-# updated. On Samsung Book5 models (sensor mounted upside-down), libcamera
-# debayers with SGRBG pattern on SGBRG data, swapping R and B channels.
-# All CCM presets below have columns 1 and 3 swapped to compensate.
 PRESETS=(
-"No CCM (baseline)|No color correction — raw debayer + AWB only. Colors will be R/B swapped.|# SPDX-License-Identifier: CC0-1.0
+"No CCM (baseline)|No color correction — raw debayer + AWB only. Image will be desaturated/grayscale.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -87,7 +81,7 @@ algorithms:
   - Agc:
 ..."
 
-"R↔B swap only|Pure red/blue channel swap — fixes bayer mismatch with no other color change.|# SPDX-License-Identifier: CC0-1.0
+"Identity CCM|Identity matrix — CCM enabled but no color change. Tests CCM pipeline overhead.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -97,14 +91,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 0.0, 0.0, 1.0,
+          ccm: [ 1.0, 0.0, 0.0,
                  0.0, 1.0, 0.0,
-                 1.0, 0.0, 0.0 ]
+                 0.0, 0.0, 1.0 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + light boost|R/B swap with 10% saturation boost on all channels.|# SPDX-License-Identifier: CC0-1.0
+"Symmetric light boost|Equal 10% saturation boost on all channels. Mild color enhancement.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -114,14 +108,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.05, -0.05,  1.1,
-                -0.05,  1.1,  -0.05,
-                 1.1,  -0.05, -0.05 ]
+          ccm: [ 1.1, -0.05, -0.05,
+                -0.05,  1.1, -0.05,
+                -0.05, -0.05,  1.1 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + medium boost|R/B swap with 20% saturation boost. Stronger color.|# SPDX-License-Identifier: CC0-1.0
+"Symmetric medium boost|Equal 20% saturation boost. Stronger color.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -131,14 +125,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.1, -0.1,  1.2,
+          ccm: [ 1.2, -0.1, -0.1,
                 -0.1,  1.2, -0.1,
-                 1.2, -0.1, -0.1 ]
+                -0.1, -0.1,  1.2 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + strong boost|R/B swap with 40% saturation boost. Very vivid colors.|# SPDX-License-Identifier: CC0-1.0
+"Symmetric strong boost|Equal 40% saturation boost. Very vivid colors.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -148,14 +142,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.2, -0.2,  1.4,
+          ccm: [ 1.4, -0.2, -0.2,
                 -0.2,  1.4, -0.2,
-                 1.4, -0.2, -0.2 ]
+                -0.2, -0.2,  1.4 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + green boost light|R/B swap with green boosted 20% more than R/B. Default preset.|# SPDX-License-Identifier: CC0-1.0
+"Green boost (anti-purple) light|Boosts green 20% more than R/B. Counters purple/magenta cast.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -165,14 +159,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.025, -0.025,  1.05,
-                -0.2,    1.3,   -0.1,
-                 1.05,  -0.025, -0.025 ]
+          ccm: [ 1.05, -0.025, -0.025,
+                -0.1,   1.3,   -0.2,
+                -0.025, -0.025,  1.05 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + green boost medium|R/B swap with green boosted 40% more. Stronger green.|# SPDX-License-Identifier: CC0-1.0
+"Green boost (anti-purple) medium|Boosts green 40% more than R/B. Stronger purple correction.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -182,14 +176,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 0.0,  0.0,  1.0,
+          ccm: [ 1.0,  0.0,  0.0,
                 -0.2,  1.4, -0.2,
-                 1.0,  0.0,  0.0 ]
+                 0.0,  0.0,  1.0 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + green boost strong|R/B swap with strong green boost. For residual color cast.|# SPDX-License-Identifier: CC0-1.0
+"Green boost (anti-purple) strong|Boosts green significantly. For strong purple bias.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -199,14 +193,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 0.025,  0.025, 0.95,
-                -0.25,   1.5,  -0.25,
-                 0.95,   0.025, 0.025 ]
+          ccm: [ 0.95,  0.025, 0.025,
+                -0.25,  1.5,  -0.25,
+                 0.025, 0.025, 0.95 ]
   - Adjust:
   - Agc:
 ..."
 
-"R↔B swap + warm correction|R/B swap with red reduced, green boosted. For warm/yellow cast.|# SPDX-License-Identifier: CC0-1.0
+"Red reduce + green boost|Reduces red, boosts green. For warm/magenta cast.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -216,14 +210,14 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 0.05,  0.05,  0.9,
-                -0.2,   1.35, -0.15,
-                 1.05, -0.05,  0.0 ]
+          ccm: [ 0.9,  0.05, 0.05,
+                -0.15, 1.35,-0.2,
+                 0.0, -0.05, 1.05 ]
   - Adjust:
   - Agc:
 ..."
 
-"Arch Wiki + R↔B swap|Arch Wiki OV02C10 matrix with R/B swap applied.|# SPDX-License-Identifier: CC0-1.0
+"Arch Wiki (OV02C10 reference)|Original matrix from Arch Wiki. Tuned for OV02C10, may cause purple on OV02E10.|# SPDX-License-Identifier: CC0-1.0
 %YAML 1.1
 ---
 version: 1
@@ -233,9 +227,9 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [-0.01, -0.02,  1.05,
+          ccm: [ 1.05, -0.02, -0.01,
                 -0.03,  0.92, -0.03,
-                 1.05, -0.02, -0.01 ]
+                -0.01, -0.02,  1.05 ]
   - Adjust:
   - Agc:
 ..."
