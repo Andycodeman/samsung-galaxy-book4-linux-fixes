@@ -357,16 +357,27 @@ if m:
         f'{indent} */\n'
         f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(videoFormat.toPixelFormat());\n'
         f'{indent}if (inputBayer.isValid()) {{\n'
+        f'{indent}\tBayerFormat::Order origOrder = inputBayer.order;\n'
         f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+        f'{indent}\tLOG(SimplePipeline, Warning)\n'
+        f'{indent}\t\t<< "[BAYER-FIX] transform="\n'
+        f'{indent}\t\t<< static_cast<int>(config->combinedTransform())\n'
+        f'{indent}\t\t<< " origOrder=" << static_cast<int>(origOrder)\n'
+        f'{indent}\t\t<< " newOrder=" << static_cast<int>(inputBayer.order)\n'
+        f'{indent}\t\t<< " origFmt=" << videoFormat.toPixelFormat()\n'
+        f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat();\n'
         f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
         f'{indent}}} else {{\n'
+        f'{indent}\tLOG(SimplePipeline, Warning)\n'
+        f'{indent}\t\t<< "[BAYER-FIX] inputBayer NOT valid for fmt="\n'
+        f'{indent}\t\t<< videoFormat.toPixelFormat();\n'
         f'{indent}\tinputCfg.pixelFormat = videoFormat.toPixelFormat();\n'
         f'{indent}}}'
     )
 
     result = content[:m.start()] + new_code + content[m.end():]
     patched = True
-    print("Patched v0.6+ inputCfg.pixelFormat with bayer order override")
+    print("Patched v0.6+ inputCfg.pixelFormat with bayer order override + diagnostics")
 
 # Try v0.5 pattern: inputCfg.pixelFormat = pipeConfig->captureFormat;
 if not patched:
@@ -384,9 +395,20 @@ if not patched:
             f'{indent} */\n'
             f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);\n'
             f'{indent}if (inputBayer.isValid()) {{\n'
+            f'{indent}\tBayerFormat::Order origOrder = inputBayer.order;\n'
             f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+            f'{indent}\tLOG(SimplePipeline, Warning)\n'
+            f'{indent}\t\t<< "[BAYER-FIX] transform="\n'
+            f'{indent}\t\t<< static_cast<int>(config->combinedTransform())\n'
+            f'{indent}\t\t<< " origOrder=" << static_cast<int>(origOrder)\n'
+            f'{indent}\t\t<< " newOrder=" << static_cast<int>(inputBayer.order)\n'
+            f'{indent}\t\t<< " origFmt=" << pipeConfig->captureFormat\n'
+            f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat();\n'
             f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
             f'{indent}}} else {{\n'
+            f'{indent}\tLOG(SimplePipeline, Warning)\n'
+            f'{indent}\t\t<< "[BAYER-FIX] inputBayer NOT valid for fmt="\n'
+            f'{indent}\t\t<< pipeConfig->captureFormat;\n'
             f'{indent}\tinputCfg.pixelFormat = pipeConfig->captureFormat;\n'
             f'{indent}}}'
         )
