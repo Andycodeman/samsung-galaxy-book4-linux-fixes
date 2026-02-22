@@ -1,0 +1,30 @@
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1354,8 +1354,20 @@
+
+-	/* Configure the video node. */
+-	V4L2PixelFormat videoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
++	/* Configure the video node, always accounting for Bayer pattern changes from transforms. */
++	V4L2PixelFormat videoFormat;
++	BayerFormat cfgBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);
++	if (cfgBayer.isValid()) {
++		/*
++		 * Always recalculate the Bayer order based on the sensor transform.
++		 * Some sensors (e.g. OV02E10) set V4L2_CTRL_FLAG_MODIFY_LAYOUT on
++		 * flip controls but never update the media bus format code, so we
++		 * cannot rely on format.code != pipeConfig->code to detect changes.
++		 */
++		cfgBayer.order = data->sensor_->bayerOrder(config->combinedTransform());
++		videoFormat = cfgBayer.toV4L2PixelFormat();
++	} else {
++		videoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
++	}
+
+ 	V4L2DeviceFormat captureFormat;
+ 	captureFormat.fourcc = videoFormat;
+@@ -1397,7 +1409,7 @@
+
+ 	StreamConfiguration inputCfg;
+-	inputCfg.pixelFormat = pipeConfig->captureFormat;
++	inputCfg.pixelFormat = videoFormat.toPixelFormat();
+ 	inputCfg.size = pipeConfig->captureSize;
