@@ -154,19 +154,6 @@ detect_libcamera_version() {
 
     # Map to git tag
     LIBCAMERA_GIT_TAG="v${ver_clean}"
-
-    # Determine which patch to use
-    local major minor
-    major=$(echo "$ver_clean" | cut -d. -f1)
-    minor=$(echo "$ver_clean" | cut -d. -f2)
-
-    if [[ "$major" -eq 0 && "$minor" -le 5 ]]; then
-        PATCH_FILE="$SCRIPT_DIR/bayer-fix-v0.5.patch"
-        PATCH_VERSION="v0.5"
-    else
-        PATCH_FILE="$SCRIPT_DIR/bayer-fix-v0.6.patch"
-        PATCH_VERSION="v0.6+"
-    fi
 }
 
 # ─── Install build dependencies ──────────────────────────────────────
@@ -305,221 +292,122 @@ apply_patch_sed() {
         die "Cannot find simple.cpp at expected path: $simple_cpp"
     fi
 
-    info "Applying bayer order fix (${PATCH_VERSION})..."
+    info "Applying bayer order fix..."
 
-    if [[ "$PATCH_VERSION" == "v0.5" ]]; then
-        # v0.5.x: Replace the simple one-liner
-        # Find: V4L2PixelFormat videoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
-        # Replace with unconditional bayer computation
-        python3 - "$simple_cpp" << 'PYEOF'
+    # NEW APPROACH: Don't touch videoFormat (V4L2 rejects format changes).
+    # Instead, only override inputCfg.pixelFormat which goes directly to
+    # the SoftISP debayer. The debayer gets its bayer pattern ENTIRELY from
+    # inputCfg.pixelFormat — it never queries V4L2.
+    #
+    # The patch replaces the single line:
+    #   inputCfg.pixelFormat = pipeConfig->captureFormat;     (v0.5)
+    #   inputCfg.pixelFormat = videoFormat.toPixelFormat();   (v0.6+)
+    # with code that computes the correct bayer order based on sensor transform.
+
+    python3 - "$simple_cpp" << 'PYEOF'
 import sys, re
 
 filepath = sys.argv[1]
 with open(filepath, 'r') as f:
     content = f.read()
 
-# Pattern 1: Replace the video format line (consume original comment too)
-old_pattern = r'\t/\* Configure the video node\. \*/\n\tV4L2PixelFormat videoFormat = video->toV4L2PixelFormat\(pipeConfig->captureFormat\);'
-new_code = r'''\t/* Configure the video node, always accounting for Bayer pattern changes from transforms. */
-\tV4L2PixelFormat videoFormat;
-\tBayerFormat cfgBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);
-\tif (cfgBayer.isValid()) {
+# The replacement code: compute corrected bayer order for SoftISP debayer
+replacement_block = r'''{
 \t\t/*
-\t\t * Always recalculate the Bayer order based on the sensor transform.
-\t\t * Some sensors (e.g. OV02E10) set V4L2_CTRL_FLAG_MODIFY_LAYOUT on
-\t\t * flip controls but never update the media bus format code, so we
-\t\t * cannot rely on format.code != pipeConfig->code to detect changes.
+\t\t * Override the bayer order for the SoftISP debayer based on the
+\t\t * actual sensor transform. Some sensors (e.g. OV02E10) set
+\t\t * V4L2_CTRL_FLAG_MODIFY_LAYOUT on flip controls but never update
+\t\t * the media bus format code. The V4L2 capture format stays as the
+\t\t * native bayer order, but the physical pixel data has shifted.
+\t\t * We leave the V4L2 format unchanged (driver rejects changes) and
+\t\t * only tell the SoftISP debayer the correct pattern.
 \t\t */
-\t\tcfgBayer.order = data->sensor_->bayerOrder(config->combinedTransform());
-\t\tvideoFormat = cfgBayer.toV4L2PixelFormat();
-\t} else {
-\t\tvideoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
+\t\tBayerFormat inputBayer = BayerFormat::fromPixelFormat(ORIGINAL_EXPR);
+\t\tif (inputBayer.isValid()) {
+\t\t\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());
+\t\t\tinputCfg.pixelFormat = inputBayer.toPixelFormat();
+\t\t} else {
+\t\t\tinputCfg.pixelFormat = ORIGINAL_EXPR;
+\t\t}
 \t}'''
 
-result, count = re.subn(old_pattern, new_code, content)
-if count == 0:
-    # Try without the comment (some versions differ)
-    old_pattern2 = r'\tV4L2PixelFormat videoFormat = video->toV4L2PixelFormat\(pipeConfig->captureFormat\);'
-    new_code2 = '''\t/* Configure the video node, always accounting for Bayer pattern changes from transforms. */
-\tV4L2PixelFormat videoFormat;
-\tBayerFormat cfgBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);
-\tif (cfgBayer.isValid()) {
-\t\tcfgBayer.order = data->sensor_->bayerOrder(config->combinedTransform());
-\t\tvideoFormat = cfgBayer.toV4L2PixelFormat();
-\t} else {
-\t\tvideoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
-\t}'''
-    result, count = re.subn(old_pattern2, new_code2, result if count > 0 else content, count=1)
+patched = False
 
-if count == 0:
-    print("ERROR: Could not find video format pattern to patch (hunk 1)", file=sys.stderr)
-    sys.exit(1)
+# Try v0.6+ pattern first: inputCfg.pixelFormat = videoFormat.toPixelFormat();
+v06_pattern = r'inputCfg\.pixelFormat\s*=\s*videoFormat\.toPixelFormat\(\)\s*;'
+m = re.search(v06_pattern, content)
+if m:
+    # Get the indentation
+    line_start = content.rfind('\n', 0, m.start()) + 1
+    indent = re.match(r'^(\s*)', content[line_start:]).group(1)
 
-# Pattern 2: Replace inputCfg.pixelFormat
-old_input = r'inputCfg\.pixelFormat = pipeConfig->captureFormat;'
-new_input = 'inputCfg.pixelFormat = videoFormat.toPixelFormat();'
-result, count2 = re.subn(old_input, new_input, result, count=1)
+    block = replacement_block.replace('ORIGINAL_EXPR', 'videoFormat.toPixelFormat()')
+    # Fix indentation - use actual indent from source
+    block = block.replace('\\t', '\t')
+    lines = block.split('\n')
+    indented = '\n'.join(indent + line.lstrip('{').rstrip('}') if i > 0 and i < len(lines)-1
+                         else line for i, line in enumerate(lines))
 
-if count2 == 0:
-    print("WARNING: Could not find inputCfg.pixelFormat pattern (hunk 2) — may already be patched", file=sys.stderr)
+    # Actually, let's just do a clean replacement
+    new_code = (
+        f'/*\n'
+        f'{indent} * Override bayer order for SoftISP based on actual sensor transform.\n'
+        f'{indent} * OV02E10 sets MODIFY_LAYOUT but never updates format code.\n'
+        f'{indent} * V4L2 format stays unchanged; only the debayer input is corrected.\n'
+        f'{indent} */\n'
+        f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(videoFormat.toPixelFormat());\n'
+        f'{indent}if (inputBayer.isValid()) {{\n'
+        f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+        f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
+        f'{indent}}} else {{\n'
+        f'{indent}\tinputCfg.pixelFormat = videoFormat.toPixelFormat();\n'
+        f'{indent}}}'
+    )
+
+    result = content[:m.start()] + new_code + content[m.end():]
+    patched = True
+    print("Patched v0.6+ inputCfg.pixelFormat with bayer order override")
+
+# Try v0.5 pattern: inputCfg.pixelFormat = pipeConfig->captureFormat;
+if not patched:
+    v05_pattern = r'inputCfg\.pixelFormat\s*=\s*pipeConfig->captureFormat\s*;'
+    m = re.search(v05_pattern, content)
+    if m:
+        line_start = content.rfind('\n', 0, m.start()) + 1
+        indent = re.match(r'^(\s*)', content[line_start:]).group(1)
+
+        new_code = (
+            f'/*\n'
+            f'{indent} * Override bayer order for SoftISP based on actual sensor transform.\n'
+            f'{indent} * OV02E10 sets MODIFY_LAYOUT but never updates format code.\n'
+            f'{indent} * V4L2 format stays unchanged; only the debayer input is corrected.\n'
+            f'{indent} */\n'
+            f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);\n'
+            f'{indent}if (inputBayer.isValid()) {{\n'
+            f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+            f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
+            f'{indent}}} else {{\n'
+            f'{indent}\tinputCfg.pixelFormat = pipeConfig->captureFormat;\n'
+            f'{indent}}}'
+        )
+
+        result = content[:m.start()] + new_code + content[m.end():]
+        patched = True
+        print("Patched v0.5 inputCfg.pixelFormat with bayer order override")
+
+if not patched:
+    # Check if already patched
+    if 'inputBayer.order' in content and 'bayerOrder' in content:
+        print("Source appears already patched (inputBayer.order + bayerOrder found)")
+        result = content
+    else:
+        print("ERROR: Could not find inputCfg.pixelFormat assignment to patch", file=sys.stderr)
+        print("Searched for both v0.5 and v0.6+ patterns.", file=sys.stderr)
+        sys.exit(1)
 
 with open(filepath, 'w') as f:
     f.write(result)
-
-print(f"Patched {count} + {count2} locations in {filepath}")
 PYEOF
-
-    else
-        # v0.6+: Replace the conditional block with unconditional
-        python3 - "$simple_cpp" << 'PYEOF'
-import sys, re
-
-filepath = sys.argv[1]
-with open(filepath, 'r') as f:
-    content = f.read()
-
-# Pattern 1: Find the conditional bayer order block and make it unconditional
-# Match the entire if/else block
-old_pattern = (
-    r'(/\* Configure the video node.*?\*/\n)'
-    r'(\s+)V4L2PixelFormat videoFormat;\n'
-    r'\s+if \(format\.code == pipeConfig->code\) \{\n'
-    r'\s+videoFormat = video->toV4L2PixelFormat\(pipeConfig->captureFormat\);\n'
-    r'\s+\} else \{\n'
-    r'(?:\s+/\*.*?\*/\n)?'  # optional comment block
-    r'(?:\s+\*.*?\n)*'      # continuation of comment
-    r'\s+BayerFormat cfgBayer = BayerFormat::fromPixelFormat\(pipeConfig->captureFormat\);\n'
-    r'\s+cfgBayer\.order = data->sensor_->bayerOrder\(config->combinedTransform\(\)\);\n'
-    r'\s+videoFormat = cfgBayer\.toV4L2PixelFormat\(\);\n'
-    r'\s+\}'
-)
-
-new_code = (
-    r'/* Configure the video node, always accounting for Bayer pattern changes from transforms. */\n'
-    r'\2V4L2PixelFormat videoFormat;\n'
-    r'\2BayerFormat cfgBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);\n'
-    r'\2if (cfgBayer.isValid()) {\n'
-    r'\2\t/*\n'
-    r'\2\t * Always recalculate the Bayer order based on the sensor transform.\n'
-    r'\2\t * Some sensors (e.g. OV02E10) set V4L2_CTRL_FLAG_MODIFY_LAYOUT on\n'
-    r'\2\t * flip controls but never update the media bus format code, so we\n'
-    r'\2\t * cannot rely on format.code != pipeConfig->code to detect changes.\n'
-    r'\2\t */\n'
-    r'\2\tcfgBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
-    r'\2\tvideoFormat = cfgBayer.toV4L2PixelFormat();\n'
-    r'\2} else {\n'
-    r'\2\tvideoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);\n'
-    r'\2}'
-)
-
-result, count = re.subn(old_pattern, new_code, content, flags=re.DOTALL)
-
-if count == 0:
-    # Simpler fallback: just look for the key conditional
-    print("Trying simplified pattern match...", file=sys.stderr)
-
-    old_simple = r'if \(format\.code == pipeConfig->code\) \{'
-    if re.search(old_simple, content):
-        # Found the conditional — do line-by-line replacement
-        lines = content.split('\n')
-        new_lines = []
-        i = 0
-        patched = False
-        while i < len(lines):
-            line = lines[i]
-            # Look for the start of the conditional block
-            if not patched and 'format.code == pipeConfig->code' in line:
-                # Get indentation
-                indent = re.match(r'^(\s*)', line).group(1)
-
-                # Find the closing brace of the else block
-                brace_depth = 0
-                j = i
-                while j < len(lines):
-                    brace_depth += lines[j].count('{') - lines[j].count('}')
-                    if brace_depth == 0:
-                        break
-                    j += 1
-
-                # Replace the entire if/else block plus preceding lines
-                # Walk back to remove:
-                #   - "V4L2PixelFormat videoFormat;" line (we replace it)
-                #   - Any comment block above it (we replace it)
-                remove_count = 0
-                # Check for "V4L2PixelFormat videoFormat;" on the line before the if
-                if i > 0 and 'V4L2PixelFormat videoFormat;' in lines[i-1]:
-                    remove_count += 1
-                    # Check for comment block above the variable declaration
-                    check_idx = i - 1 - remove_count
-                    if check_idx >= 0 and ('*/' in lines[check_idx] or '/*' in lines[check_idx]):
-                        # Single-line or multi-line comment ending here
-                        remove_count += 1
-                        while check_idx - (remove_count - 1) >= 0:
-                            test_line = lines[i - 1 - remove_count]
-                            if '/*' in test_line:
-                                break
-                            remove_count += 1
-                if remove_count > 0:
-                    new_lines = new_lines[:-remove_count]
-
-                new_lines.append(f'{indent}/* Configure the video node, always accounting for Bayer pattern changes from transforms. */')
-                new_lines.append(f'{indent}V4L2PixelFormat videoFormat;')
-                new_lines.append(f'{indent}BayerFormat cfgBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);')
-                new_lines.append(f'{indent}if (cfgBayer.isValid()) {{')
-                new_lines.append(f'{indent}\t/*')
-                new_lines.append(f'{indent}\t * Always recalculate the Bayer order based on the sensor transform.')
-                new_lines.append(f'{indent}\t * Some sensors (e.g. OV02E10) set V4L2_CTRL_FLAG_MODIFY_LAYOUT on')
-                new_lines.append(f'{indent}\t * flip controls but never update the media bus format code, so we')
-                new_lines.append(f'{indent}\t * cannot rely on format.code != pipeConfig->code to detect changes.')
-                new_lines.append(f'{indent}\t */')
-                new_lines.append(f'{indent}\tcfgBayer.order = data->sensor_->bayerOrder(config->combinedTransform());')
-                new_lines.append(f'{indent}\tvideoFormat = cfgBayer.toV4L2PixelFormat();')
-                new_lines.append(f'{indent}}} else {{')
-                new_lines.append(f'{indent}\tvideoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);')
-                new_lines.append(f'{indent}}}')
-
-                i = j + 1
-                patched = True
-                count = 1
-                continue
-
-            new_lines.append(line)
-            i += 1
-
-        if patched:
-            result = '\n'.join(new_lines)
-        else:
-            print("ERROR: Found conditional but could not replace it", file=sys.stderr)
-            sys.exit(1)
-    else:
-        # Check if already patched
-        if 'cfgBayer.isValid()' in content and 'bayerOrder' in content:
-            print("Source appears to already be patched (cfgBayer.isValid + bayerOrder found)", file=sys.stderr)
-            result = content
-            count = 1
-        else:
-            print("ERROR: Could not find the conditional bayer order block to patch", file=sys.stderr)
-            print("The libcamera source may have a different structure than expected.", file=sys.stderr)
-            sys.exit(1)
-
-# Pattern 2: Replace inputCfg.pixelFormat if not already done
-old_input = r'inputCfg\.pixelFormat = pipeConfig->captureFormat;'
-new_input = 'inputCfg.pixelFormat = videoFormat.toPixelFormat();'
-result, count2 = re.subn(old_input, new_input, result, count=1)
-
-if count2 == 0:
-    if 'videoFormat.toPixelFormat()' in result:
-        print("inputCfg.pixelFormat already uses videoFormat — OK", file=sys.stderr)
-        count2 = 1
-    else:
-        print("WARNING: Could not find inputCfg.pixelFormat pattern (hunk 2)", file=sys.stderr)
-
-with open(filepath, 'w') as f:
-    f.write(result)
-
-print(f"Patched {count} + {count2} locations in {filepath}")
-PYEOF
-    fi
 
     if [[ $? -ne 0 ]]; then
         die "Failed to apply patch. The libcamera source may have an unexpected structure."
@@ -566,7 +454,6 @@ ok "Distro: $DISTRO_NAME ($DISTRO)"
 
 detect_libcamera_version
 ok "libcamera version: $LIBCAMERA_VERSION (tag: $LIBCAMERA_GIT_TAG)"
-ok "Patch version: $PATCH_VERSION"
 
 find_libcamera_libs
 ok "Library dir: $LIBCAMERA_LIB_DIR"
@@ -612,10 +499,10 @@ echo ""
 
 # Step 5: Verify patch
 info "Verifying patch..."
-if grep -q 'cfgBayer.isValid()' "$BUILD_DIR/libcamera/src/libcamera/pipeline/simple/simple.cpp"; then
-    ok "Patch verified — unconditional bayer order computation present."
+if grep -q 'inputBayer.order' "$BUILD_DIR/libcamera/src/libcamera/pipeline/simple/simple.cpp"; then
+    ok "Patch verified — bayer order override for SoftISP debayer present."
 else
-    die "Patch verification failed — cfgBayer.isValid() not found in patched source."
+    die "Patch verification failed — inputBayer.order not found in patched source."
 fi
 echo ""
 
