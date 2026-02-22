@@ -607,13 +607,62 @@ fi
 ok "Originals backed up to $BACKUP_DIR"
 echo ""
 
-# Step 8: Install
-info "Installing patched libcamera..."
+# Step 8: Install — ONLY replace .so files, NOT IPA modules
+# IPA modules are signed at build time. Replacing them with our build's
+# modules would break IPA signature validation → "No camera detected".
+# Our patch is in the pipeline handler (libcamera.so), not the IPA.
+info "Installing patched libcamera (libraries only, preserving IPA modules)..."
+
 cd "$BUILD_DIR/libcamera"
-ninja -C builddir install 2>&1 | tail -10
+
+# Find the built .so files
+BUILD_LIB_DIR="builddir/src/libcamera"
+INSTALLED_COUNT=0
+
+for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
+    if [[ -f "$built_so" && ! -L "$built_so" ]]; then
+        so_name=$(basename "$built_so")
+        target="$LIBCAMERA_LIB_DIR/$so_name"
+        if [[ -f "$target" ]]; then
+            cp -a "$built_so" "$target"
+            info "  Replaced: $target"
+            INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
+        fi
+    fi
+done
+
+# Also copy symlinks
+for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
+    if [[ -L "$built_so" ]]; then
+        so_name=$(basename "$built_so")
+        target="$LIBCAMERA_LIB_DIR/$so_name"
+        cp -a "$built_so" "$target" 2>/dev/null || true
+    fi
+done
+
+# Also replace libcamera-base .so (same directory, also part of the build)
+for built_so in "$BUILD_LIB_DIR"/../libcamera-base*.so* \
+                "$BUILD_LIB_DIR"/../../libcamera-base*.so* \
+                "builddir/src/libcamera/base"/libcamera-base*.so*; do
+    if [[ -f "$built_so" ]] || [[ -L "$built_so" ]]; then
+        so_name=$(basename "$built_so")
+        target="$LIBCAMERA_LIB_DIR/$so_name"
+        if [[ -f "$target" ]] || [[ -L "$target" ]]; then
+            cp -a "$built_so" "$target"
+            [[ ! -L "$built_so" ]] && info "  Replaced: $target"
+        fi
+    fi
+done
+
+if [[ $INSTALLED_COUNT -eq 0 ]]; then
+    warn "No .so files were replaced. Falling back to full install..."
+    ninja -C builddir install 2>&1 | tail -10
+fi
+
 ldconfig 2>/dev/null || true
 
-ok "Patched libcamera installed."
+ok "Patched libcamera installed ($INSTALLED_COUNT libraries replaced)."
+info "IPA modules were NOT replaced (preserving original signatures)."
 echo ""
 
 # Step 9: Verify installation
