@@ -212,7 +212,13 @@ install_deps_fedora() {
         openssl-devel \
         elfutils-devel \
         libunwind-devel \
-        cmake
+        cmake \
+        rpm-build \
+        dnf-plugins-core
+
+    # Install build dependencies from the libcamera spec file
+    info "Installing libcamera build dependencies from spec..."
+    dnf builddep -y libcamera 2>&1 || warn "dnf builddep failed — may need manual deps"
 }
 
 install_deps_arch() {
@@ -538,30 +544,84 @@ install_deps
 ok "Build dependencies installed."
 echo ""
 
-# Step 3: Clone source
-info "Cloning libcamera source (${LIBCAMERA_GIT_TAG})..."
+# Step 3: Get source
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Clone with depth 1 for speed
-if ! git clone --depth 1 --branch "$LIBCAMERA_GIT_TAG" \
-    https://git.libcamera.org/libcamera/libcamera.git \
-    "$BUILD_DIR/libcamera" 2>&1; then
+USE_SRPM=false
 
-    warn "Could not clone tag $LIBCAMERA_GIT_TAG — trying master..."
-    git clone --depth 1 \
-        https://git.libcamera.org/libcamera/libcamera.git \
-        "$BUILD_DIR/libcamera" 2>&1
-    LIBCAMERA_GIT_TAG="master"
+# On Fedora, use SRPM to get distro-patched source (vanilla source may
+# lack distro-specific patches for camera/pipeline support)
+if [[ "$DISTRO" == "fedora" ]]; then
+    info "Fedora detected — downloading source RPM for distro-patched source..."
 
-    # Re-detect version from source
-    if [[ -f "$BUILD_DIR/libcamera/meson.build" ]]; then
-        SRC_VER=$(grep "version :" "$BUILD_DIR/libcamera/meson.build" | head -1 | grep -oP "'[\d.]+'") || true
-        [[ -n "$SRC_VER" ]] && info "Source version: $SRC_VER"
+    SRPM_DIR="$BUILD_DIR/srpmbuild"
+    mkdir -p "$SRPM_DIR"
+
+    # Download the source RPM
+    if dnf download --source libcamera --destdir "$SRPM_DIR" 2>&1; then
+        SRPM_FILE=$(ls "$SRPM_DIR"/*.src.rpm 2>/dev/null | head -1)
+        if [[ -n "$SRPM_FILE" ]]; then
+            ok "Downloaded: $(basename "$SRPM_FILE")"
+
+            # Extract SRPM
+            RPM_BUILD="$BUILD_DIR/rpmbuild"
+            mkdir -p "$RPM_BUILD"/{SOURCES,SPECS}
+            rpm -i --define "_topdir $RPM_BUILD" "$SRPM_FILE" 2>&1
+
+            # Find the spec file
+            SPEC_FILE=$(ls "$RPM_BUILD/SPECS/"*.spec 2>/dev/null | head -1)
+            if [[ -n "$SPEC_FILE" ]]; then
+                # Prep the source (extract + apply distro patches)
+                info "Preparing source with Fedora patches..."
+                rpmbuild -bp --define "_topdir $RPM_BUILD" "$SPEC_FILE" 2>&1 | tail -10
+
+                # Find the prepared source directory
+                PREPPED_SRC=$(find "$RPM_BUILD/BUILD" -maxdepth 2 -name "meson.build" \
+                    -path "*/libcamera*/meson.build" -printf '%h\n' 2>/dev/null | head -1)
+
+                if [[ -n "$PREPPED_SRC" && -d "$PREPPED_SRC" ]]; then
+                    # Move to expected location
+                    mv "$PREPPED_SRC" "$BUILD_DIR/libcamera"
+                    USE_SRPM=true
+                    ok "Source prepared with Fedora patches."
+                else
+                    warn "Could not find prepared source. Falling back to git clone."
+                fi
+            else
+                warn "Could not find spec file. Falling back to git clone."
+            fi
+        else
+            warn "No SRPM downloaded. Falling back to git clone."
+        fi
+    else
+        warn "dnf download --source failed. Falling back to git clone."
     fi
 fi
 
-ok "Source cloned."
+# Fall back to git clone (for non-Fedora or if SRPM approach failed)
+if [[ "$USE_SRPM" != "true" ]]; then
+    info "Cloning libcamera source (${LIBCAMERA_GIT_TAG})..."
+
+    if ! git clone --depth 1 --branch "$LIBCAMERA_GIT_TAG" \
+        https://git.libcamera.org/libcamera/libcamera.git \
+        "$BUILD_DIR/libcamera" 2>&1; then
+
+        warn "Could not clone tag $LIBCAMERA_GIT_TAG — trying master..."
+        git clone --depth 1 \
+            https://git.libcamera.org/libcamera/libcamera.git \
+            "$BUILD_DIR/libcamera" 2>&1
+        LIBCAMERA_GIT_TAG="master"
+
+        # Re-detect version from source
+        if [[ -f "$BUILD_DIR/libcamera/meson.build" ]]; then
+            SRC_VER=$(grep "version :" "$BUILD_DIR/libcamera/meson.build" | head -1 | grep -oP "'[\d.]+'") || true
+            [[ -n "$SRC_VER" ]] && info "Source version: $SRC_VER"
+        fi
+    fi
+
+    ok "Source cloned."
+fi
 echo ""
 
 # Step 4: Apply patch
@@ -609,75 +669,81 @@ fi
 ok "Originals backed up to $BACKUP_DIR"
 echo ""
 
-# Step 8: Install — ONLY replace .so files, NOT IPA modules
-# IPA modules are signed at build time. Replacing them with our build's
-# modules would break IPA signature validation → "No camera detected".
-# Our patch is in the pipeline handler (libcamera.so), not the IPA.
-info "Installing patched libcamera (libraries only, preserving IPA modules)..."
-
+# Step 8: Install
 cd "$BUILD_DIR/libcamera"
 
-# Find the built .so files
-BUILD_LIB_DIR="builddir/src/libcamera"
-INSTALLED_COUNT=0
-
-for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
-    if [[ -f "$built_so" && ! -L "$built_so" ]]; then
-        so_name=$(basename "$built_so")
-        target="$LIBCAMERA_LIB_DIR/$so_name"
-        if [[ -f "$target" ]]; then
-            cp -a "$built_so" "$target"
-            info "  Replaced: $target"
-            INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
-        fi
-    fi
-done
-
-# Also copy symlinks
-for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
-    if [[ -L "$built_so" ]]; then
-        so_name=$(basename "$built_so")
-        target="$LIBCAMERA_LIB_DIR/$so_name"
-        cp -a "$built_so" "$target" 2>/dev/null || true
-    fi
-done
-
-# Also replace libcamera-base .so (same directory, also part of the build)
-for built_so in "$BUILD_LIB_DIR"/../libcamera-base*.so* \
-                "$BUILD_LIB_DIR"/../../libcamera-base*.so* \
-                "builddir/src/libcamera/base"/libcamera-base*.so*; do
-    if [[ -f "$built_so" ]] || [[ -L "$built_so" ]]; then
-        so_name=$(basename "$built_so")
-        target="$LIBCAMERA_LIB_DIR/$so_name"
-        if [[ -f "$target" ]] || [[ -L "$target" ]]; then
-            cp -a "$built_so" "$target"
-            [[ ! -L "$built_so" ]] && info "  Replaced: $target"
-        fi
-    fi
-done
-
-if [[ $INSTALLED_COUNT -eq 0 ]]; then
-    warn "No .so files were replaced. Falling back to full install..."
+if [[ "$USE_SRPM" == "true" ]]; then
+    # SRPM build: full install is safe — IPA modules built from same source
+    # with matching signatures, and distro patches are included.
+    info "Installing patched libcamera (full install from distro source)..."
     ninja -C builddir install 2>&1 | tail -10
+    ldconfig 2>/dev/null || true
+    ok "Patched libcamera installed (full install from SRPM source)."
+else
+    # Git clone build: ONLY replace .so files, NOT IPA modules.
+    # IPA modules are signed at build time. Replacing them with our build's
+    # modules would break IPA signature validation → "No camera detected".
+    info "Installing patched libcamera (libraries only, preserving IPA modules)..."
+
+    BUILD_LIB_DIR="builddir/src/libcamera"
+    INSTALLED_COUNT=0
+
+    for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
+        if [[ -f "$built_so" && ! -L "$built_so" ]]; then
+            so_name=$(basename "$built_so")
+            target="$LIBCAMERA_LIB_DIR/$so_name"
+            if [[ -f "$target" ]]; then
+                cp -a "$built_so" "$target"
+                info "  Replaced: $target"
+                INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
+            fi
+        fi
+    done
+
+    # Also copy symlinks
+    for built_so in "$BUILD_LIB_DIR"/libcamera*.so*; do
+        if [[ -L "$built_so" ]]; then
+            so_name=$(basename "$built_so")
+            target="$LIBCAMERA_LIB_DIR/$so_name"
+            cp -a "$built_so" "$target" 2>/dev/null || true
+        fi
+    done
+
+    # Also replace libcamera-base .so
+    for built_so in "$BUILD_LIB_DIR"/../libcamera-base*.so* \
+                    "$BUILD_LIB_DIR"/../../libcamera-base*.so* \
+                    "builddir/src/libcamera/base"/libcamera-base*.so*; do
+        if [[ -f "$built_so" ]] || [[ -L "$built_so" ]]; then
+            so_name=$(basename "$built_so")
+            target="$LIBCAMERA_LIB_DIR/$so_name"
+            if [[ -f "$target" ]] || [[ -L "$target" ]]; then
+                cp -a "$built_so" "$target"
+                [[ ! -L "$built_so" ]] && info "  Replaced: $target"
+            fi
+        fi
+    done
+
+    if [[ $INSTALLED_COUNT -eq 0 ]]; then
+        warn "No .so files were replaced. Falling back to full install..."
+        ninja -C builddir install 2>&1 | tail -10
+    fi
+
+    ldconfig 2>/dev/null || true
+
+    # Fix IPA module path: our built .so has compiled-in IPA paths that may
+    # not match the distro's layout.
+    if [[ -n "${LIBCAMERA_IPA_DIR:-}" && -d "$LIBCAMERA_IPA_DIR" ]]; then
+        IPA_ENV_FILE="/etc/profile.d/libcamera-ipa-path.sh"
+        echo "export LIBCAMERA_IPA_MODULE_PATH=$LIBCAMERA_IPA_DIR" > "$IPA_ENV_FILE"
+        chmod 644 "$IPA_ENV_FILE"
+        export LIBCAMERA_IPA_MODULE_PATH="$LIBCAMERA_IPA_DIR"
+        ok "IPA module path configured: $LIBCAMERA_IPA_DIR"
+        info "  Environment file: $IPA_ENV_FILE"
+    fi
+
+    ok "Patched libcamera installed ($INSTALLED_COUNT libraries replaced)."
+    info "IPA modules were NOT replaced (preserving original signatures)."
 fi
-
-ldconfig 2>/dev/null || true
-
-# Fix IPA module path: our built .so has compiled-in IPA paths that may
-# not match the distro's layout. Create an env config so libcamera can
-# find the original IPA modules.
-if [[ -n "${LIBCAMERA_IPA_DIR:-}" && -d "$LIBCAMERA_IPA_DIR" ]]; then
-    IPA_ENV_FILE="/etc/profile.d/libcamera-ipa-path.sh"
-    echo "export LIBCAMERA_IPA_MODULE_PATH=$LIBCAMERA_IPA_DIR" > "$IPA_ENV_FILE"
-    chmod 644 "$IPA_ENV_FILE"
-    # Also set it for the current session
-    export LIBCAMERA_IPA_MODULE_PATH="$LIBCAMERA_IPA_DIR"
-    ok "IPA module path configured: $LIBCAMERA_IPA_DIR"
-    info "  Environment file: $IPA_ENV_FILE"
-fi
-
-ok "Patched libcamera installed ($INSTALLED_COUNT libraries replaced)."
-info "IPA modules were NOT replaced (preserving original signatures)."
 echo ""
 
 # Step 9: Verify installation
