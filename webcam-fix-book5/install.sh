@@ -660,8 +660,15 @@ if [[ -n "$TUNING_DIR" ]]; then
     SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
     if [[ -f "$SCRIPT_DIR/$TUNING_FILE" ]]; then
         sudo cp "$SCRIPT_DIR/$TUNING_FILE" "$TUNING_DIR/$TUNING_FILE"
-        echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/"
-        echo "    (light CCM for color correction — not a full sensor calibration)"
+
+        # Remove Adjust algorithm for libcamera < 0.6 (doesn't exist in older versions)
+        if [[ -n "${LIBCAMERA_MINOR:-}" && "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
+            sudo sed -i '/^  - Adjust:/d' "$TUNING_DIR/$TUNING_FILE"
+            echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/ (Adjust removed for v0.5)"
+        else
+            echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/"
+        fi
+        echo "    (CCM tuned by david-bartlett on Galaxy Book5 Pro)"
         echo "    Use ./tune-ccm.sh to interactively find the best color preset"
     else
         echo "  ⚠ Tuning file $TUNING_FILE not found in installer directory"

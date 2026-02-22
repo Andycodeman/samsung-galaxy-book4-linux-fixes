@@ -2,9 +2,13 @@
 # Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
 # Used by libcamera's Simple pipeline handler / Software ISP
 #
-# The OV02E10 has no calibration data in libcamera yet. This file provides
-# a basic CCM that boosts green relative to R/B to improve color balance.
+# Tuned by david-bartlett on Galaxy Book5 Pro (940XHA).
+# Counteracts green tint by boosting R/B channels with cross-channel warmth.
 # Use tune-ccm.sh to interactively find the best color preset.
+#
+# NOTE: libcamera <0.6.0 does not have the Adjust algorithm.
+# The installer handles this automatically, but if editing manually,
+# remove the "- Adjust:" line for libcamera 0.5.x.
 %YAML 1.1
 ---
 version: 1
@@ -14,9 +18,9 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 1.05, -0.025, -0.025,
-                -0.1, 1.3, -0.2,
-                -0.025, -0.025, 1.05 ]
+          ccm: [ 1.1, 0.1, 0,
+                 0, 0.99, 0.01,
+                 0.1, 0.15, 0.95 ]
   - Adjust:
   - Agc:
 ...
