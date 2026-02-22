@@ -718,24 +718,47 @@ if [[ -n "${LIBCAMERA_IPA_DIR:-}" && -d "$LIBCAMERA_IPA_DIR" ]]; then
     cp -a "$LIBCAMERA_IPA_DIR"/* "$BACKUP_DIR/$LIBCAMERA_IPA_DIR/" 2>/dev/null || true
 fi
 
+# Backup libexec (IPA proxy workers) for full install
+LIB_PREFIX="${LIBCAMERA_LIB_DIR%%/lib*}"
+LIBCAMERA_LIBEXEC_DIR=""
+for dir in "${LIB_PREFIX}/libexec/libcamera" /usr/local/libexec/libcamera /usr/libexec/libcamera; do
+    if [[ -d "$dir" ]]; then
+        LIBCAMERA_LIBEXEC_DIR="$dir"
+        mkdir -p "$BACKUP_DIR/$dir"
+        cp -a "$dir"/* "$BACKUP_DIR/$dir/" 2>/dev/null || true
+        break
+    fi
+done
+
 ok "Originals backed up to $BACKUP_DIR"
 echo ""
 
 # Step 8: Install
 cd "$BUILD_DIR/libcamera"
 
+# Determine install strategy:
+# - SRPM build: full install (distro source, matching signatures)
+# - /usr/local prefix: full install (built from source, no distro packages to preserve)
+# - Distro package paths (/usr/lib*): .so-only install (preserve distro IPA signatures)
+USE_FULL_INSTALL=false
 if [[ "$USE_SRPM" == "true" ]]; then
-    # SRPM build: full install is safe — IPA modules built from same source
-    # with matching signatures, and distro patches are included.
-    info "Installing patched libcamera (full install from distro source)..."
+    USE_FULL_INSTALL=true
+    info "Full install: built from distro source RPM."
+elif [[ "$LIBCAMERA_LIB_DIR" == /usr/local/* ]]; then
+    USE_FULL_INSTALL=true
+    info "Full install: library is in /usr/local (built from source, not distro package)."
+fi
+
+if [[ "$USE_FULL_INSTALL" == "true" ]]; then
+    info "Installing patched libcamera (full install)..."
     ninja -C builddir install 2>&1 | tail -10
     ldconfig 2>/dev/null || true
-    ok "Patched libcamera installed (full install from SRPM source)."
+    ok "Patched libcamera installed (full install)."
 else
-    # Git clone build: ONLY replace .so files, NOT IPA modules.
+    # Distro package: ONLY replace .so files, NOT IPA modules.
     # IPA modules are signed at build time. Replacing them with our build's
     # modules would break IPA signature validation → "No camera detected".
-    info "Installing patched libcamera (libraries only, preserving IPA modules)..."
+    info "Installing patched libcamera (libraries only, preserving distro IPA modules)..."
 
     BUILD_LIB_DIR="builddir/src/libcamera"
     INSTALLED_COUNT=0
