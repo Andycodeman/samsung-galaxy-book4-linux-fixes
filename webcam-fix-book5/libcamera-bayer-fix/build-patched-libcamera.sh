@@ -382,18 +382,27 @@ if m:
         f'{indent} * Override bayer order for SoftISP based on actual sensor transform.\n'
         f'{indent} * OV02E10 sets MODIFY_LAYOUT but never updates format code.\n'
         f'{indent} * V4L2 format stays unchanged; only the debayer input is corrected.\n'
+        f'{indent} * Set LIBCAMERA_BAYER_ORDER=0..3 to manually override (BGGR/GBRG/GRBG/RGGB).\n'
         f'{indent} */\n'
         f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(videoFormat.toPixelFormat());\n'
         f'{indent}if (inputBayer.isValid()) {{\n'
         f'{indent}\tBayerFormat::Order origOrder = inputBayer.order;\n'
-        f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+        f'{indent}\tconst char *bayerEnv = std::getenv("LIBCAMERA_BAYER_ORDER");\n'
+        f'{indent}\tif (bayerEnv) {{\n'
+        f'{indent}\t\tint bo = std::atoi(bayerEnv);\n'
+        f'{indent}\t\tif (bo >= 0 && bo <= 3)\n'
+        f'{indent}\t\t\tinputBayer.order = static_cast<BayerFormat::Order>(bo);\n'
+        f'{indent}\t}} else {{\n'
+        f'{indent}\t\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+        f'{indent}\t}}\n'
         f'{indent}\tLOG(SimplePipeline, Warning)\n'
         f'{indent}\t\t<< "[BAYER-FIX] transform="\n'
         f'{indent}\t\t<< static_cast<int>(config->combinedTransform())\n'
         f'{indent}\t\t<< " origOrder=" << static_cast<int>(origOrder)\n'
         f'{indent}\t\t<< " newOrder=" << static_cast<int>(inputBayer.order)\n'
         f'{indent}\t\t<< " origFmt=" << videoFormat.toPixelFormat()\n'
-        f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat();\n'
+        f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat()\n'
+        f'{indent}\t\t<< " override=" << (bayerEnv ? bayerEnv : "auto");\n'
         f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
         f'{indent}}} else {{\n'
         f'{indent}\tLOG(SimplePipeline, Warning)\n'
@@ -420,18 +429,27 @@ if not patched:
             f'{indent} * Override bayer order for SoftISP based on actual sensor transform.\n'
             f'{indent} * OV02E10 sets MODIFY_LAYOUT but never updates format code.\n'
             f'{indent} * V4L2 format stays unchanged; only the debayer input is corrected.\n'
+            f'{indent} * Set LIBCAMERA_BAYER_ORDER=0..3 to manually override (BGGR/GBRG/GRBG/RGGB).\n'
             f'{indent} */\n'
             f'{indent}BayerFormat inputBayer = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);\n'
             f'{indent}if (inputBayer.isValid()) {{\n'
             f'{indent}\tBayerFormat::Order origOrder = inputBayer.order;\n'
-            f'{indent}\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+            f'{indent}\tconst char *bayerEnv = std::getenv("LIBCAMERA_BAYER_ORDER");\n'
+            f'{indent}\tif (bayerEnv) {{\n'
+            f'{indent}\t\tint bo = std::atoi(bayerEnv);\n'
+            f'{indent}\t\tif (bo >= 0 && bo <= 3)\n'
+            f'{indent}\t\t\tinputBayer.order = static_cast<BayerFormat::Order>(bo);\n'
+            f'{indent}\t}} else {{\n'
+            f'{indent}\t\tinputBayer.order = data->sensor_->bayerOrder(config->combinedTransform());\n'
+            f'{indent}\t}}\n'
             f'{indent}\tLOG(SimplePipeline, Warning)\n'
             f'{indent}\t\t<< "[BAYER-FIX] transform="\n'
             f'{indent}\t\t<< static_cast<int>(config->combinedTransform())\n'
             f'{indent}\t\t<< " origOrder=" << static_cast<int>(origOrder)\n'
             f'{indent}\t\t<< " newOrder=" << static_cast<int>(inputBayer.order)\n'
             f'{indent}\t\t<< " origFmt=" << pipeConfig->captureFormat\n'
-            f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat();\n'
+            f'{indent}\t\t<< " newFmt=" << inputBayer.toPixelFormat()\n'
+            f'{indent}\t\t<< " override=" << (bayerEnv ? bayerEnv : "auto");\n'
             f'{indent}\tinputCfg.pixelFormat = inputBayer.toPixelFormat();\n'
             f'{indent}}} else {{\n'
             f'{indent}\tLOG(SimplePipeline, Warning)\n'
@@ -476,6 +494,15 @@ if dm:
     print("Added dispatch diagnostic LOG before converter_/swIsp_ branch")
 else:
     print("WARNING: Could not find converter_ dispatch to add diagnostic", file=sys.stderr)
+
+# ── Third patch: Add #include <cstdlib> for std::getenv ──
+if '#include <cstdlib>' not in result:
+    # Insert after the first #include line
+    first_include = re.search(r'^#include\s+[<"].*[>"]', result, re.MULTILINE)
+    if first_include:
+        insert_pos = result.find('\n', first_include.start()) + 1
+        result = result[:insert_pos] + '#include <cstdlib>\n' + result[insert_pos:]
+        print("Added #include <cstdlib> for std::getenv/std::atoi")
 
 with open(filepath, 'w') as f:
     f.write(result)
