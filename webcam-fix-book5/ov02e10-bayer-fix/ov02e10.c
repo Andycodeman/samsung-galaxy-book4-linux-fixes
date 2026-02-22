@@ -114,8 +114,13 @@ MODULE_PARM_DESC(dump_regs,
 #define OV02E10_TEST_PATTERN_BAR_SHIFT	1
 
 /*
- * Page 7 ISP window registers — 4 pairs of 16-bit values.
- * These are accessed via CCI_REG8 after selecting page 7 (write 0x05 to 0xfd).
+ * ISP window registers — 4 pairs of 16-bit values.
+ *
+ * IMPORTANT: These registers are on the page selected by writing 0x07
+ * to 0xFD. This is NOT the same as OV02E10_PAGE_7 (which is 0x05)!
+ * The driver's page constants use OmniVision's internal naming where
+ * "page 7" maps to select value 0x05. The init array uses raw value
+ * 0x07, which selects a different, unnamed page.
  *
  * Base values from mode_1928x1088_30fps_2lane init array:
  *   Pair A: 0x42:0x43 = 0x00:0xad = 173
@@ -125,6 +130,7 @@ MODULE_PARM_DESC(dump_regs,
  *
  * Likely represent ISP crop window boundaries. Exact mapping unknown.
  */
+#define OV02E10_PAGE_WIN		0x07	/* raw 0xFD value for window regs */
 #define OV02E10_P7_REG_A_HI		CCI_REG8(0x42)
 #define OV02E10_P7_REG_A_LO		CCI_REG8(0x43)
 #define OV02E10_P7_REG_B_HI		CCI_REG8(0x44)
@@ -431,9 +437,9 @@ static void ov02e10_adjust_window_for_flip(struct ov02e10 *ov02e10,
 		return;
 	}
 
-	/* Switch to page 7 and write adjusted values */
+	/* Switch to the ACTUAL page where window registers live (0xFD=0x07) */
 	cci_write(ov02e10->regmap, OV02E10_REG_PAGE_FLAG,
-		  OV02E10_PAGE_7, pret);
+		  OV02E10_PAGE_WIN, pret);
 	/* High bytes are always 0x00 for these values (< 256) */
 	cci_write(ov02e10->regmap, OV02E10_P7_REG_A_HI, 0x00, pret);
 	cci_write(ov02e10->regmap, OV02E10_P7_REG_A_LO, a_lo, pret);
@@ -676,17 +682,18 @@ static void ov02e10_dump_all_regs(struct ov02e10 *ov02e10)
 		const char *name;
 		u8 fd_val;
 	} pages[] = {
-		{ "P0", 0x00 },
-		{ "P1", 0x01 },
-		{ "P2", 0x02 },
-		{ "P3", 0x03 },
-		{ "P5", 0x04 },
-		{ "P7", 0x05 },
-		{ "P8", 0x06 },
-		{ "P9", 0x0F },
-		{ "PD", 0x08 },
-		{ "PE", 0x09 },
-		{ "PF", 0x0A },
+		{ "P0",  0x00 },
+		{ "P1",  0x01 },
+		{ "P2",  0x02 },
+		{ "P3",  0x03 },
+		{ "P5",  0x04 },
+		{ "P7",  0x05 },
+		{ "P8",  0x06 },
+		{ "WIN", 0x07 },  /* unnamed page where 0x42-0x49 window regs live */
+		{ "PD",  0x08 },
+		{ "PE",  0x09 },
+		{ "PF",  0x0A },
+		{ "P9",  0x0F },
 	};
 	char line[800]; /* 256 regs * 3 chars each + header */
 	int p, r, pos, ret;
