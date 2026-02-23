@@ -90,8 +90,16 @@ rm -f /etc/modprobe.d/v4l2loopback.conf
 rm -f /etc/modules-load.d/ivsc.conf
 rm -f /etc/modprobe.d/ivsc-camera.conf
 
-# Remove IVSC entries from initramfs
-if [ -f /etc/initramfs-tools/modules ]; then
+# Remove IVSC entries from initramfs (distro-aware)
+if [ -f /etc/dracut.conf.d/ivsc-camera.conf ]; then
+    rm -f /etc/dracut.conf.d/ivsc-camera.conf
+    log "Rebuilding initramfs (dracut)..."
+    dracut --force 2>/dev/null || true
+elif [ -f /etc/mkinitcpio.conf.d/ivsc-camera.conf ]; then
+    rm -f /etc/mkinitcpio.conf.d/ivsc-camera.conf
+    log "Rebuilding initramfs (mkinitcpio)..."
+    mkinitcpio -P 2>/dev/null || true
+elif [ -f /etc/initramfs-tools/modules ]; then
     for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
         sed -i "/^${mod}$/d" /etc/initramfs-tools/modules
     done
