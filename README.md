@@ -1,6 +1,6 @@
-# Samsung Galaxy Book4 Linux Fixes
+# Samsung Galaxy Book4/5 Linux Fixes
 
-Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy Book4/5 laptops. Tested on the **Galaxy Book4 Ultra** — should also work on Pro, Pro 360, and Book5 models with the same hardware, but only the Ultra has been directly verified.
+Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy Book4 and Book5 laptops. Confirmed working on **Galaxy Book4 Ultra** (Ubuntu, Fedora), **Book5 Pro 940XHA** (Fedora), and **Book5 Pro 960XHA** (Ubuntu) — should also work on Pro 360 and other models with the same hardware.
 
 > **Distro support:** The **speaker fix** works on Ubuntu, Fedora, and Arch-based distros (CachyOS, Manjaro, etc. — `dkms` and `linux-headers` must be installed first, see [speaker-fix README](speaker-fix/)). The **webcam fix** (Book4/Meteor Lake) currently requires **Ubuntu or Ubuntu-based distros** (uses apt, PPA packages, and initramfs-tools). A **Book5/Lunar Lake webcam fix** is available for **Arch, Fedora, and Ubuntu** (Ubuntu requires libcamera 0.5.2+ built from source) — see [webcam-fix-book5](webcam-fix-book5/).
 
