@@ -21,21 +21,36 @@ info() { echo "[camera-relay] $*"; }
 warn() { echo "[camera-relay] WARNING: $*" >&2; }
 
 detect_camera_name() {
-    # Try cam -l first (works on all libcamera versions)
-    if command -v cam &>/dev/null; then
+    # Check cached name first (avoids repeated camera probing during status polls)
+    local cache_file="${XDG_RUNTIME_DIR:-/tmp}/camera-relay-camera-name"
+    if [[ -f "$cache_file" ]]; then
+        local cached
+        cached=$(cat "$cache_file" 2>/dev/null)
+        if [[ -n "$cached" ]]; then
+            echo "$cached"
+            return 0
+        fi
+    fi
+
+    # Prefer pw-cli (reads PipeWire metadata, does NOT open the camera).
+    # cam -l opens the libcamera CameraManager which disrupts active streams
+    # on the Simple pipeline handler (causes image flip/color corruption).
+    if command -v pw-cli &>/dev/null; then
         local name
-        name=$(cam -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
+        name=$(pw-cli ls Node 2>/dev/null | grep -oP 'object\.path = "libcamera:\K[^"]+' | head -1)
         if [[ -n "$name" ]]; then
+            echo "$name" > "$cache_file"
             echo "$name"
             return 0
         fi
     fi
 
-    # Fallback: check libcamera SPA plugin via pw-cli
-    if command -v pw-cli &>/dev/null; then
+    # Fallback: cam -l (only safe when no other app is using the camera)
+    if command -v cam &>/dev/null; then
         local name
-        name=$(pw-cli ls Node 2>/dev/null | grep -oP 'object\.path = "libcamera:\K[^"]+' | head -1)
+        name=$(cam -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
         if [[ -n "$name" ]]; then
+            echo "$name" > "$cache_file"
             echo "$name"
             return 0
         fi
