@@ -183,12 +183,15 @@ cmd_start() {
     local gst_camera_name="${camera_name//\\/\\\\}"
 
     # Let libcamerasrc negotiate its native format/resolution, then convert.
-    # libcamera on IPU7 typically outputs NV12 or bayer at 1920x1088 (sensor-
-    # aligned). Hardcoding resolution or format causes negotiation failures on
-    # some configurations. videoconvert handles any input → YUY2 for v4l2sink.
+    # libcamera 0.5.x outputs NV12 via software ISP; 0.7.0+ may use GPU
+    # debayering (EGL) which outputs ABGR8888. A queue element is required
+    # between source and sink to buffer frames — without it, the async GPU
+    # debayer causes "Internal data stream error" (flow error -5).
+    # videoconvert handles any input format → YUY2 for v4l2sink.
     local gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
+        ! queue max-size-buffers=3 leaky=downstream
         ! videoconvert
         ! "video/x-raw,format=YUY2"
         ! v4l2sink device="$loopback_dev"
