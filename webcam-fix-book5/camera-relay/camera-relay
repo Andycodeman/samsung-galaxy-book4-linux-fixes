@@ -210,13 +210,16 @@ cmd_start() {
     # between source and sink to buffer frames — without it, the async GPU
     # debayer causes "Internal data stream error" (flow error -5).
     # videoconvert handles any input format → YUY2 for v4l2sink.
+    # v4l2sink io-mode=1 (MMAP) is required — the default USERPTR mode
+    # renders one preroll frame then fails on the PAUSED→PLAYING transition
+    # with v4l2loopback (tested on v4l2loopback 0.15.3 / kernel 6.19).
     local gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
         ! queue max-size-buffers=3 leaky=downstream
         ! videoconvert
         ! "video/x-raw,format=YUY2"
-        ! v4l2sink device="$loopback_dev"
+        ! v4l2sink device="$loopback_dev" io-mode=1
     )
 
     local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.log"
