@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 # Require a display server
 if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
@@ -143,12 +144,50 @@ class CameraRelaySystray:
         return True  # keep polling
 
     def _on_toggle(self, _widget):
-        if self.running:
-            subprocess.Popen([RELAY_CMD, "stop"])
-        else:
-            subprocess.Popen([RELAY_CMD, "start"])
-        # Poll sooner to update UI
-        GLib.timeout_add(2000, self._poll_status)
+        action = "stop" if self.running else "start"
+        # Disable toggle while action is in progress
+        if hasattr(self, "item_toggle"):
+            self.item_toggle.set_label("Stopping..." if self.running else "Starting...")
+            self.item_toggle.set_sensitive(False)
+
+        def _run_action():
+            try:
+                result = subprocess.run(
+                    [RELAY_CMD, action],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if result.returncode != 0:
+                    error = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                    GLib.idle_add(self._show_error, f"Failed to {action} relay:\n\n{error}")
+            except subprocess.TimeoutExpired:
+                GLib.idle_add(self._show_error, f"Timed out trying to {action} relay")
+            except Exception as e:
+                GLib.idle_add(self._show_error, f"Error: {e}")
+            # Update UI from main thread after action completes
+            GLib.idle_add(self._poll_status_once)
+
+        threading.Thread(target=_run_action, daemon=True).start()
+
+    def _poll_status_once(self):
+        """One-shot status update (for use with GLib.idle_add after actions)."""
+        self._poll_status()
+        # Re-enable toggle button
+        if hasattr(self, "item_toggle"):
+            self.item_toggle.set_sensitive(True)
+        return False  # do NOT repeat
+
+    def _show_error(self, message):
+        dialog = Gtk.MessageDialog(
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Camera Relay Error",
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+        return False  # for GLib.idle_add
 
     def _on_persistent_toggle(self, _widget):
         if self.persistent:
