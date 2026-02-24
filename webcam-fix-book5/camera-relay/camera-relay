@@ -45,13 +45,24 @@ detect_camera_name() {
 }
 
 detect_loopback_device() {
-    local dev
+    local dev driver_link
     for dev in /sys/devices/virtual/video4linux/video*/name; do
         [[ -f "$dev" ]] || continue
-        if grep -qF "$CARD_LABEL" "$dev" 2>/dev/null; then
+        # Check if this is a v4l2loopback device by looking at the driver
+        driver_link="$(dirname "$dev")/device/driver"
+        if [[ -L "$driver_link" ]] && [[ "$(readlink "$driver_link")" == *v4l2loopback* ]]; then
             echo "/dev/$(basename "$(dirname "$dev")")"
             return 0
         fi
+        # Fallback: match known v4l2loopback card labels
+        local card_name
+        card_name=$(cat "$dev" 2>/dev/null)
+        case "$card_name" in
+            *"Camera Relay"*|*"Loopback"*|*"v4l2loopback"*|*"Intel MIPI Camera"*)
+                echo "/dev/$(basename "$(dirname "$dev")")"
+                return 0
+                ;;
+        esac
     done
     return 1
 }
@@ -83,8 +94,8 @@ ensure_v4l2loopback() {
     sleep 1
 
     if ! detect_loopback_device &>/dev/null; then
-        die "v4l2loopback loaded but no device with label '$CARD_LABEL' found.
-Check /etc/modprobe.d/ for conflicting v4l2loopback configs."
+        die "v4l2loopback loaded but no loopback device found.
+Check /etc/modprobe.d/ for v4l2loopback configuration."
     fi
 }
 
@@ -153,14 +164,19 @@ cmd_start() {
         export LIBCAMERA_IPA_MODULE_PATH="$ipa_path"
     fi
 
+    # Let libcamerasrc negotiate its native format/resolution, then convert.
+    # libcamera on IPU7 typically outputs NV12 or bayer at 1920x1088 (sensor-
+    # aligned). Hardcoding resolution or format causes negotiation failures on
+    # some configurations. videoconvert handles any input → YUY2 for v4l2sink.
     local gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$camera_name"
-        ! "video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1"
         ! videoconvert
         ! "video/x-raw,format=YUY2"
         ! v4l2sink device="$loopback_dev"
     )
+
+    local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.log"
 
     if $foreground; then
         info "Starting relay (foreground)..."
@@ -168,20 +184,32 @@ cmd_start() {
         exec "${gst_cmd[@]}"
     else
         info "Starting relay..."
-        "${gst_cmd[@]}" &>/dev/null &
+        "${gst_cmd[@]}" >"$gst_log" 2>&1 &
         local pid=$!
         echo "$pid" > "$PID_FILE"
 
         # Verify it actually started
-        sleep 2
+        sleep 3
         if ! kill -0 "$pid" 2>/dev/null; then
             rm -f "$PID_FILE"
-            die "Relay failed to start. Camera may be in use by another application.
-Try closing other camera apps first, then retry."
+            echo ""
+            echo "ERROR: Relay failed to start. GStreamer output:" >&2
+            echo "───────────────────────────────────────────────" >&2
+            tail -20 "$gst_log" 2>/dev/null >&2 || true
+            echo "───────────────────────────────────────────────" >&2
+            echo "" >&2
+            echo "Common causes:" >&2
+            echo "  - Camera in use by another app (Firefox, qcam, etc.)" >&2
+            echo "  - v4l2loopback device not ready" >&2
+            echo "  - Resolution/format not supported by camera" >&2
+            echo "Full log: $gst_log" >&2
+            exit 1
         fi
 
         info "Relay started (PID $pid)"
-        info "Camera available as '$CARD_LABEL' in apps"
+        local card_name
+        card_name=$(cat "/sys/class/video4linux/$(basename "$loopback_dev")/name" 2>/dev/null || echo "$loopback_dev")
+        info "Camera available as '$card_name' in apps"
     fi
 }
 
