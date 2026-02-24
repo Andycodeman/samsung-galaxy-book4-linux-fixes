@@ -305,8 +305,12 @@ cmd_status() {
     [[ -z "$device" ]] && device="(not loaded)"
 
     if $json; then
+        # Escape backslashes for valid JSON (camera names like \_SB_.LNK0
+        # contain literal backslashes that break JSON parsing)
+        local json_camera="${camera//\\/\\\\}"
+        local json_device="${device//\\/\\\\}"
         printf '{"running":%s,"persistent":%s,"camera":"%s","device":"%s"}\n' \
-            "$running" "$persistent" "$camera" "$device"
+            "$running" "$persistent" "$json_camera" "$json_device"
     else
         echo "Camera Relay Status"
         echo "─────────────────────"
