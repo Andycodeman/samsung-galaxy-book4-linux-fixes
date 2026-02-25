@@ -21,15 +21,22 @@ This installer packages all of those pieces into a single script.
 
 ## How It Works
 
-The IPU7 camera pipeline is simpler than IPU6 — no v4l2loopback or relay service needed:
+The IPU7 camera pipeline uses the open-source libcamera stack with PipeWire, plus an on-demand V4L2 relay for apps that don't support PipeWire:
 
 ```
 usb_ljca + gpio_ljca  →  intel_cvs (DKMS)  →  OV02C10/OV02E10  →  libcamera  →  PipeWire  →  Apps
 (LJCA GPIO/USB)           (powers sensor)      (kernel sensor)      (userspace)   (pipewire-    (Firefox,
-                                                                                   libcamera)    Zoom, etc.)
+                                                                                   libcamera)    Chromium, etc.)
+                                                                                      ↓
+                                                                              camera-relay (on-demand)
+                                                                              libcamerasrc → v4l2loopback
+                                                                                      ↓
+                                                                              /dev/videoX (V4L2)  →  Zoom, OBS, VLC
 ```
 
-**Key difference from Book4 (IPU6) fix:** The Book4 fix uses Intel's proprietary camera HAL (`icamerasrc`) with a v4l2loopback relay. The Book5 fix uses the open-source libcamera stack, which talks directly to PipeWire — no relay, no loopback, no initramfs changes needed.
+**On-demand camera relay:** Apps that don't support PipeWire (Zoom, OBS, VLC) access the camera through an on-demand V4L2 relay. The relay uses near-zero CPU when idle — the camera only activates when an app opens the V4L2 device, and stops automatically when the app closes it. The installer automatically enables the relay on login.
+
+**Key difference from Book4 (IPU6) fix:** Both fixes use the same open-source libcamera stack and on-demand camera relay. The main differences are hardware-level: Book5 (IPU7) needs the `intel_cvs` DKMS module and LJCA GPIO drivers, while Book4 (IPU6) needs IVSC module loading and initramfs configuration to fix the boot race condition. No initramfs changes are needed for Book5.
 
 ---
 
@@ -148,6 +155,8 @@ sudo ./libcamera-bayer-fix/build-patched-libcamera.sh --uninstall
 
 libcamera on IPU7 currently supports only one client at a time. If Firefox is using the camera, qcam (or any other app) cannot access it simultaneously — and vice versa. This is the root cause of "Firefox conflicts with qcam" reports. Close the first app before opening another, or reboot if the camera becomes unresponsive.
 
+**Note:** Multiple V4L2 apps can share the camera relay's `/dev/videoX` device simultaneously, but only one libcamera client can access the sensor at a time. If the relay is running and a PipeWire app tries to access the camera directly, it will fail (or vice versa).
+
 ### Browsers / apps don't see the camera (Ubuntu source builds)
 
 On Ubuntu, if you built PipeWire and libcamera from source (installed to `/usr/local`), PipeWire may not find the libcamera SPA plugin. The installer auto-detects this and sets `SPA_PLUGIN_DIR` in `/etc/environment.d/libcamera-ipa.conf`. **A reboot is required** for PipeWire's systemd user service to pick up the new environment variable.
@@ -186,9 +195,18 @@ Then relaunch the browser. If Chrome still shows "waiting for your permission" w
 
 **Note:** These flags may become enabled by default in future browser versions.
 
-### VLC doesn't see the camera
+### VLC / Zoom / OBS don't see the camera
 
-VLC uses V4L2 directly, not PipeWire. Since IPU7's V4L2 nodes expose raw bayer data (not usable video), VLC cannot access the camera through its V4L2 capture module. Use a PipeWire-aware app (Firefox, qcam) or wait for VLC to add PipeWire camera support.
+These apps use V4L2 directly, not PipeWire. The installer automatically enables the on-demand camera relay, which provides a standard V4L2 device. If it's not working, check the relay status:
+
+```bash
+camera-relay status
+```
+
+If the relay was disabled, re-enable it:
+```bash
+camera-relay enable-persistent --yes
+```
 
 ### PipeWire doesn't see the camera
 
@@ -227,13 +245,13 @@ If that doesn't help, verify that `pipewire-libcamera` (Arch) or `pipewire-plugi
 | | Book4 (IPU6) | Book5 (IPU7) |
 |---|---|---|
 | **Camera ISP** | IPU6 (Meteor Lake) | IPU7 (Lunar Lake) |
-| **Userspace pipeline** | Intel camera HAL (`icamerasrc`) | libcamera (open source) |
-| **PipeWire bridge** | v4l2loopback + v4l2-relayd | pipewire-libcamera (direct) |
+| **Userspace pipeline** | libcamera (open source) | libcamera (open source) |
+| **PipeWire bridge** | pipewire-libcamera (direct) + on-demand V4L2 relay | pipewire-libcamera (direct) + on-demand V4L2 relay |
 | **Out-of-tree module** | None (IVSC modules are in-tree) | `intel_cvs` via DKMS |
 | **Initramfs changes** | Yes (IVSC boot race fix) | No |
-| **Supported distros** | Ubuntu only | Arch, Fedora, Ubuntu (source build) |
+| **Supported distros** | Ubuntu, Fedora, Arch | Arch, Fedora, Ubuntu (source build) |
 | **Maturity** | Tested and confirmed | Tested and confirmed |
-| **Directory** | `webcam-fix/` | `webcam-fix-book5/` |
+| **Directory** | `webcam-fix-libcamera/` | `webcam-fix-book5/` |
 
 ---
 
@@ -256,6 +274,10 @@ The install script creates these files:
 | `/usr/local/sbin/ipu-bridge-check-upstream.sh` | Auto-removes ipu-bridge DKMS when upstream kernel has the fix |
 | `/etc/systemd/system/ipu-bridge-check-upstream.service` | Runs upstream check on boot |
 | `/var/lib/libcamera-bayer-fix-backup/` | Backup of original libcamera files (OV02E10 bayer fix only) |
+| `/usr/local/bin/camera-relay` | On-demand camera relay CLI tool |
+| `/usr/local/bin/camera-relay-monitor` | V4L2 event monitor for on-demand activation |
+| `/etc/modprobe.d/99-camera-relay-loopback.conf` | v4l2loopback config for camera relay |
+| `/usr/local/share/camera-relay/camera-relay-systray.py` | System tray GUI for camera relay |
 
 The ipu-bridge-fix and bayer-fix files are only installed on Samsung 940XHA/960XHA models with OV02E10 sensor. The ipu-bridge fix auto-removes when the kernel includes the Samsung rotation entries. All files are removed by `uninstall.sh`.
 
@@ -316,8 +338,8 @@ On Arch with Secure Boot, you'll need to sign the module manually or use a tool 
 - [libcamera documentation](https://libcamera.org/docs.html)
 - [Samsung Galaxy Book Extras (platform driver)](https://github.com/joshuagrisham/samsung-galaxybook-extras)
 - [Speaker fix (Galaxy Book4/5)](../speaker-fix/) — MAX98390 HDA driver (DKMS)
-- [Webcam fix (Galaxy Book4)](../webcam-fix/) — IPU6 / Meteor Lake / Ubuntu
+- [Webcam fix (Galaxy Book3/Book4)](../webcam-fix-libcamera/) — IPU6 / Meteor Lake / Raptor Lake / libcamera
 
-### Galaxy Book4 Webcam Fix
+### Galaxy Book3 / Book4 Webcam Fix
 
-If you have a **Galaxy Book4** (Meteor Lake / IPU6), you need the **[webcam-fix](../webcam-fix/)** directory instead. That fix uses a completely different pipeline (Intel camera HAL + v4l2loopback relay) and only supports Ubuntu.
+If you have a **Galaxy Book3 or Book4** (Meteor Lake / Raptor Lake / IPU6), you need the **[webcam-fix-libcamera](../webcam-fix-libcamera/)** directory instead. That fix uses the same open-source libcamera stack but targets IPU6 hardware with IVSC module loading and initramfs configuration. Supports Ubuntu, Fedora, and Arch-based distros.

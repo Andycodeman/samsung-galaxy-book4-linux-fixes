@@ -2,8 +2,8 @@
 # Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
 # Used by libcamera's Simple pipeline handler / Software ISP
 #
-# Tuned by david-bartlett on Galaxy Book5 Pro (940XHA).
-# Counteracts green tint by boosting R/B channels with cross-channel warmth.
+# Symmetric strong saturation boost (tune-ccm.sh preset #5).
+# Green tint under harsh lighting is exposure-related, not a CCM issue.
 # Use tune-ccm.sh to interactively find the best color preset.
 #
 # NOTE: libcamera 0.5.x uses Lut; 0.6+ uses Adjust (replaces Lut).
@@ -19,9 +19,9 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 5000
-          ccm: [ 1.1, 0.1, 0,
-                 0, 0.99, 0.01,
-                 0.1, 0.15, 0.95 ]
+          ccm: [ 1.4, -0.2, -0.2,
+                -0.2,  1.4, -0.2,
+                -0.2, -0.2,  1.4 ]
   - Lut:
   - Adjust:
   - Agc:

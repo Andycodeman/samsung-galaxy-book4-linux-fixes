@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Camera Relay
+Comment=Toggle the camera relay for apps without PipeWire support
+Exec=/usr/local/share/camera-relay/camera-relay-systray.py
+Icon=camera-video-symbolic
+Categories=Utility;
+StartupNotify=false

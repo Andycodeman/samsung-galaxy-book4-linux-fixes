@@ -1,4 +1,6 @@
-# Fix: Samsung Galaxy Book4 Webcam (Intel IPU6 / OV02C10 / Meteor Lake)
+# Fix: Samsung Galaxy Book4 Webcam (Intel IPU6 / OV02C10 / Meteor Lake) — LEGACY
+
+> **⚠ NOT RECOMMENDED — USE [webcam-fix-libcamera](../webcam-fix-libcamera/) INSTEAD.** This is the older proprietary stack using Intel's camera HAL (`icamerasrc`) and `v4l2-relayd`. The recommended fix uses the open-source libcamera stack, supports more distros (Ubuntu, Fedora, Arch), includes an on-demand camera relay for non-PipeWire apps with near-zero idle CPU usage, and auto-enables PipeWire camera flags in Chromium browsers. **This legacy fix is kept only as a fallback** if the libcamera stack doesn't work on your hardware.
 
 > **Meteor Lake (Galaxy Book4) — Ubuntu, Fedora, Arch, and other Linux distros.** This fix does **not** support Lunar Lake (Galaxy Book5) — those models use Intel IPU7, which has a completely different camera driver stack. See the [webcam-fix-book5](../webcam-fix-book5/) directory for Galaxy Book5 support. The install script auto-detects your distro and uses the appropriate package manager or builds from source. See [Compatibility](#compatibility) below.
 

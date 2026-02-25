@@ -398,4 +398,5 @@ mokutil --list-enrolled | head -5
 
 ## See Also
 
-- **[Webcam Fix](../webcam-fix/)** — Fix for the built-in webcam (Intel IPU6 / OV02C10) on the same laptops
+- **[Webcam Fix — Book3/Book4](../webcam-fix-libcamera/)** — Fix for the built-in webcam (Intel IPU6 / OV02C10) using libcamera
+- **[Webcam Fix — Book5](../webcam-fix-book5/)** — Fix for the built-in webcam (Intel IPU7 / Lunar Lake) using libcamera

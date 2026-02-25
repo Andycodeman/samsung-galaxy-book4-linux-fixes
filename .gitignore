@@ -20,3 +20,7 @@ package-lock.json
 # Misc artifacts
 cap_%d
 .devcortex
+launch.sh
+
+# Compiled binaries (built from source during install)
+camera-relay/camera-relay-monitor
