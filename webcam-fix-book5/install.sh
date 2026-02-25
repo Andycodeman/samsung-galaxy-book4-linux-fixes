@@ -750,14 +750,12 @@ if [[ -d "$RELAY_DIR" ]]; then
 
     # Check for stale v4l2loopback with wrong label (e.g. OBS Virtual Camera)
     if lsmod 2>/dev/null | grep -q v4l2loopback; then
-        local current_label
         current_label=$(cat /sys/devices/virtual/video4linux/video*/name 2>/dev/null | grep -v "Intel IPU" | head -1)
         if [[ -n "$current_label" ]] && [[ "$current_label" != "Camera Relay" ]]; then
             echo "  ⚠ v4l2loopback is currently loaded with label '$current_label'"
             echo "    The camera relay expects 'Camera Relay'. Reloading module..."
             sudo modprobe -r v4l2loopback 2>/dev/null || true
             sudo modprobe v4l2loopback 2>/dev/null || true
-            local new_label
             new_label=$(cat /sys/devices/virtual/video4linux/video*/name 2>/dev/null | grep -v "Intel IPU" | head -1)
             if [[ "$new_label" == "Camera Relay" ]]; then
                 echo "  ✓ v4l2loopback reloaded with correct label"
