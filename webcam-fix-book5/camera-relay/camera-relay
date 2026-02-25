@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# camera-relay — On-demand libcamera → v4l2loopback relay for Book5 (IPU7)
+# camera-relay — On-demand libcamera → v4l2loopback relay
 # Provides a standard V4L2 device for apps that don't support PipeWire/libcamera.
+# Works with Book3 (IPU6EP), Book4 (IPU6EP-MTL), and Book5 (IPU7).
+#
+# In on-demand mode (default for enable-persistent), the relay daemon idles
+# with near-zero CPU usage. The camera pipeline only activates when an app
+# actually opens the device, and stops when the last app closes it.
 #
 # Usage: camera-relay start|stop|status|enable-persistent|disable-persistent
 #        camera-relay start --foreground   (for systemd service use)
-#        camera-relay enable-persistent --yes   (skip battery warning prompt)
+#        camera-relay start --on-demand    (on-demand daemon, foreground)
+#        camera-relay enable-persistent --yes   (skip confirmation prompt)
 
 set -euo pipefail
 
@@ -13,9 +19,11 @@ PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.pid"
 CACHE_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 CAMERA_CACHE="${CACHE_DIR}/camera-relay-camera-name"
 DEVICE_CACHE="${CACHE_DIR}/camera-relay-loopback-dev"
+STATE_CACHE="${CACHE_DIR}/camera-relay-state"
 SERVICE_DIR="${HOME}/.config/systemd/user"
 SERVICE_NAME="camera-relay.service"
 LOOPBACK_CONF="/etc/modprobe.d/99-camera-relay-loopback.conf"
+MONITOR_BIN="/usr/local/bin/camera-relay-monitor"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,12 +42,16 @@ detect_camera_name() {
         fi
     fi
 
-    # Prefer pw-cli (reads PipeWire metadata, does NOT open the camera).
+    # Method 1: pw-cli (reads PipeWire metadata, does NOT open the camera).
     # cam -l opens the libcamera CameraManager which disrupts active streams
     # on the Simple pipeline handler (causes image flip/color corruption).
+    # Filter out USB cameras (XHCI path) — we want the internal MIPI camera.
     if command -v pw-cli &>/dev/null; then
         local name
-        name=$(pw-cli ls Node 2>/dev/null | grep -oP 'object\.path = "libcamera:\K[^"]+' | head -1)
+        name=$(pw-cli ls Node 2>/dev/null \
+            | grep -oP 'object\.path = "libcamera:\K[^"]+' \
+            | grep -v 'XHCI' \
+            | head -1)
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
@@ -47,16 +59,67 @@ detect_camera_name() {
         fi
     fi
 
-    # Fallback: cam -l (only safe when no other app is using the camera)
-    if command -v cam &>/dev/null; then
+    # Method 2: cam -l (only safe when no other app is using the camera)
+    # Output format: "1: 'ov02c10' (\_SB_.PC00.LNK0)"
+    # Extract the camera ID from parentheses — this is what gst-launch needs
+    # for the camera-name property (not the display name in quotes).
+    local cam_cmd=""
+    if [[ -x /usr/local/bin/cam ]]; then
+        cam_cmd="/usr/local/bin/cam"
+    elif command -v cam &>/dev/null; then
+        cam_cmd="cam"
+    fi
+    if [[ -n "$cam_cmd" ]]; then
         local name
-        name=$(cam -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
+        name=$("$cam_cmd" -l 2>/dev/null | grep -oP '\(([^)]+)\)' | head -1 | tr -d '()')
+        if [[ -n "$name" ]]; then
+            echo "$name" > "$CAMERA_CACHE"
+            echo "$name"
+            return 0
+        fi
+        # Fallback to quoted display name if no parenthesized ID
+        name=$("$cam_cmd" -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
             return 0
         fi
     fi
+
+    # Method 3: Probe via GStreamer device monitor
+    # Works when pw-cli and cam are both unavailable (e.g. Fedora minimal install).
+    # gst-device-monitor-1.0 lists PipeWire and libcamera sources with properties.
+    # device.name for libcamera sources is "libcamera_device.<camera-name>".
+    if command -v gst-device-monitor-1.0 &>/dev/null; then
+        local name
+        name=$(timeout 5 gst-device-monitor-1.0 Video/Source 2>/dev/null \
+            | grep 'device\.name = libcamera_device\.' \
+            | grep -vi 'xhci\|uvc' \
+            | head -1 \
+            | sed 's/.*libcamera_device\.//' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ -n "$name" ]]; then
+            echo "$name" > "$CAMERA_CACHE"
+            echo "$name"
+            return 0
+        fi
+    fi
+
+    # Method 4: Read ACPI path from sysfs (last resort, no userspace tools needed)
+    # The OVTI02C1 (Book3/Book4) or OVTI02E1 (Book5) sensor registers as an i2c
+    # device. Its ACPI firmware node path IS the libcamera camera-name.
+    # e.g. /sys/bus/i2c/devices/i2c-OVTI02C1:00/firmware_node/path → \_SB_.PC00.LNK0
+    local acpi_dev
+    for acpi_dev in /sys/bus/i2c/devices/i2c-OVTI*; do
+        [[ -d "$acpi_dev" ]] || continue
+        local name
+        name=$(cat "$acpi_dev/firmware_node/path" 2>/dev/null)
+        if [[ -n "$name" ]]; then
+            echo "$name" > "$CAMERA_CACHE"
+            echo "$name"
+            return 0
+        fi
+    done
 
     return 1
 }
@@ -103,7 +166,7 @@ ensure_v4l2loopback() {
     if [[ -f "$LOOPBACK_CONF" ]]; then
         sudo modprobe v4l2loopback || die "Failed to load v4l2loopback module"
     else
-        sudo modprobe v4l2loopback devices=1 exclusive_caps=1 card_label="$CARD_LABEL" \
+        sudo modprobe v4l2loopback devices=1 exclusive_caps=0 card_label="$CARD_LABEL" \
             || die "Failed to load v4l2loopback module"
     fi
 
@@ -133,13 +196,24 @@ is_persistent() {
     systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null 2>&1
 }
 
+detect_gst_plugin_path() {
+    local dir
+    for dir in /usr/local/lib/x86_64-linux-gnu/gstreamer-1.0 \
+               /usr/local/lib64/gstreamer-1.0 \
+               /usr/local/lib/gstreamer-1.0 \
+               /usr/local/lib/aarch64-linux-gnu/gstreamer-1.0; do
+        if [[ -f "$dir/libgstlibcamera.so" ]]; then
+            echo "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
 detect_ipa_path() {
-    # libcamera IPA modules are in <libdir>/libcamera or <libdir>/libcamera/ipa.
-    # Check for actual IPA .so files to find the correct path.
     local path
     for path in /usr/lib64/libcamera /usr/lib/libcamera /usr/local/lib/libcamera \
                 /lib64/libcamera /lib/libcamera; do
-        # Check both the directory itself and ipa/ subdirectory
         if find "$path" -name "*.so" -path "*/ipa/*" 2>/dev/null | grep -q .; then
             echo "$path"
             return 0
@@ -149,7 +223,6 @@ detect_ipa_path() {
             return 0
         fi
     done
-    # Last resort: check environment
     if [[ -n "${LIBCAMERA_IPA_MODULE_PATH:-}" ]]; then
         echo "$LIBCAMERA_IPA_MODULE_PATH"
         return 0
@@ -157,11 +230,110 @@ detect_ipa_path() {
     return 1
 }
 
+setup_environment() {
+    # GStreamer plugin path
+    local gst_extra_path
+    if gst_extra_path=$(detect_gst_plugin_path); then
+        export GST_PLUGIN_PATH="${gst_extra_path}${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
+        info "Using GStreamer plugin: $gst_extra_path"
+    fi
+
+    # Check for libcamerasrc
+    if ! gst-inspect-1.0 libcamerasrc &>/dev/null; then
+        die "GStreamer 'libcamerasrc' element not found. Install it:
+  Fedora:  sudo dnf install gstreamer1-plugins-bad-free-extras
+  Arch:    sudo pacman -S gst-plugins-bad
+  Ubuntu:  sudo apt install gstreamer1.0-plugins-bad"
+    fi
+
+    # IPA path
+    local ipa_path
+    if ipa_path=$(detect_ipa_path); then
+        export LIBCAMERA_IPA_MODULE_PATH="$ipa_path"
+    fi
+}
+
+# Start the GStreamer pipeline, return its PID.
+# Pipeline: libcamerasrc → queue → videoconvert (ABGR→YUY2) → v4l2sink
+# videoconvert handles both format conversion AND the implicit CPU-side buffer
+# copy needed for libcamera 0.7.0+ DMA-BUF frames (which read as zeros via
+# v4l2loopback mmap without a copy). No videoflip needed — it strips rotation
+# metadata on older libcamera versions, causing flipped/discolored output.
+# In fast mode (for on-demand), skip the 3s verification sleep.
+start_pipeline() {
+    local camera_name="$1"
+    local loopback_dev="$2"
+    local fast="${3:-false}"
+    local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay-gst.log"
+
+    # gst-launch-1.0 interprets backslashes as escape characters.
+    # Camera names like "\_SB_.LNK0" need double-escaping.
+    local gst_camera_name="${camera_name//\\/\\\\}"
+
+    # Use io-mode=mmap for v4l2sink — kernel-managed buffers are the most
+    # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
+    # some Fedora systems; io-mode=auto (0) may fall through to rw.
+    # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
+    local -a gst_cmd=(
+        gst-launch-1.0 -e
+        libcamerasrc camera-name="$gst_camera_name"
+        ! queue max-size-buffers=3 leaky=downstream
+        ! videoconvert
+        ! "video/x-raw,format=YUY2"
+        ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
+    )
+
+    "${gst_cmd[@]}" >"$gst_log" 2>&1 &
+    local pid=$!
+
+    if $fast; then
+        sleep 0.5
+    else
+        sleep 3
+    fi
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        warn "Pipeline failed to start. Log: $gst_log"
+        return 1
+    fi
+
+    echo "$pid"
+    return 0
+}
+
+stop_pipeline() {
+    local pid="$1"
+    kill "$pid" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && (( waited < 5 )); do
+        sleep 1
+        (( ++waited ))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+}
+
+# No longer needed: with exclusive_caps=0, v4l2loopback always has
+# VIDEO_CAPTURE, so WirePlumber discovers it correctly on its own.
+# The old nudge_wireplumber (udevadm trigger + WirePlumber restart) was
+# needed for exclusive_caps=1 where caps only flipped after the relay
+# opened the device for writing. Removed because:
+# 1. sudo prompt blocks/confuses users
+# 2. WirePlumber restart disrupts active camera streams (causes flip)
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 cmd_start() {
+    local mode="${1:-}"
+
+    if [[ "$mode" == "--on-demand" ]]; then
+        cmd_start_on_demand
+        return
+    fi
+
     local foreground=false
-    [[ "${1:-}" == "--foreground" ]] && foreground=true
+    [[ "$mode" == "--foreground" ]] && foreground=true
 
     if is_running; then
         local pid
@@ -170,75 +342,39 @@ cmd_start() {
         return 0
     fi
 
-    # Check for libcamerasrc GStreamer element
-    if ! gst-inspect-1.0 libcamerasrc &>/dev/null; then
-        die "GStreamer 'libcamerasrc' element not found. Install it:
-  Fedora:  sudo dnf install gstreamer1-plugins-bad-free-extras
-  Arch:    sudo pacman -S gst-plugins-bad
-  Ubuntu:  sudo apt install gstreamer1.0-plugins-bad"
-    fi
-
+    setup_environment
     ensure_v4l2loopback
 
     local camera_name loopback_dev
     camera_name=$(detect_camera_name) || die "No libcamera device found. Is the camera driver loaded?"
     loopback_dev=$(detect_loopback_device) || die "No v4l2loopback device found"
 
-    # Cache values for passive status checks (systray polls status frequently
-    # and any camera/PipeWire probing disrupts the active stream)
     echo "$camera_name" > "$CAMERA_CACHE"
     echo "$loopback_dev" > "$DEVICE_CACHE"
 
     info "Camera:   $camera_name"
     info "Loopback: $loopback_dev"
 
-    # Set IPA path if available
-    local ipa_path
-    if ipa_path=$(detect_ipa_path); then
-        export LIBCAMERA_IPA_MODULE_PATH="$ipa_path"
-    fi
-
-    # gst-launch-1.0 interprets backslashes in property values as escape
-    # characters. Camera names like "\_SB_.LNK0" lose the backslash unless
-    # we double-escape it. The camera-name property needs the literal "\"
-    # to match what libcamera's CameraManager returns.
-    local gst_camera_name="${camera_name//\\/\\\\}"
-
-    # Let libcamerasrc negotiate its native format/resolution, then convert.
-    # libcamera 0.5.x outputs NV12 via software ISP; 0.7.0+ may use GPU
-    # debayering (EGL) which outputs ABGR8888. A queue element is required
-    # between source and sink to buffer frames — without it, the async GPU
-    # debayer causes "Internal data stream error" (flow error -5).
-    # videoconvert handles any input format → YUY2 for v4l2sink.
-    # v4l2sink io-mode=1 (MMAP) is required — the default USERPTR mode
-    # renders one preroll frame then fails on the PAUSED→PLAYING transition
-    # with v4l2loopback (tested on v4l2loopback 0.15.3 / kernel 6.19).
-    local gst_cmd=(
-        gst-launch-1.0 -e
-        libcamerasrc camera-name="$gst_camera_name"
-        ! queue max-size-buffers=3 leaky=downstream
-        ! videoconvert
-        ! "video/x-raw,format=YUY2"
-        ! v4l2sink device="$loopback_dev" io-mode=1
-    )
-
     local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.log"
 
     if $foreground; then
         info "Starting relay (foreground)..."
+        echo "streaming" > "$STATE_CACHE"
         echo $$ > "$PID_FILE"
-        exec "${gst_cmd[@]}"
+        local gst_camera_name="${camera_name//\\/\\\\}"
+        exec gst-launch-1.0 -e \
+            libcamerasrc camera-name="$gst_camera_name" \
+            ! queue max-size-buffers=3 leaky=downstream \
+            ! videoconvert \
+            ! "video/x-raw,format=YUY2" \
+            ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
     else
         info "Starting relay..."
-        "${gst_cmd[@]}" >"$gst_log" 2>&1 &
-        local pid=$!
-        echo "$pid" > "$PID_FILE"
+        local pid
+        pid=$(start_pipeline "$camera_name" "$loopback_dev" false) || true
 
-        # Verify it actually started
-        sleep 3
-        if ! kill -0 "$pid" 2>/dev/null; then
-            rm -f "$PID_FILE"
-            echo ""
+        if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+            echo "" >&2
             echo "ERROR: Relay failed to start. GStreamer output:" >&2
             echo "───────────────────────────────────────────────" >&2
             tail -20 "$gst_log" 2>/dev/null >&2 || true
@@ -252,11 +388,91 @@ cmd_start() {
             exit 1
         fi
 
+        echo "$pid" > "$PID_FILE"
+        echo "streaming" > "$STATE_CACHE"
         info "Relay started (PID $pid)"
         local card_name
         card_name=$(cat "/sys/class/video4linux/$(basename "$loopback_dev")/name" 2>/dev/null || echo "$loopback_dev")
         info "Camera available as '$card_name' in apps"
     fi
+}
+
+cmd_start_on_demand() {
+    if is_running; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        info "Already running (PID $pid)"
+        return 0
+    fi
+
+    setup_environment
+    ensure_v4l2loopback
+
+    local camera_name loopback_dev
+    camera_name=$(detect_camera_name) || die "No libcamera device found. Is the camera driver loaded?"
+    loopback_dev=$(detect_loopback_device) || die "No v4l2loopback device found"
+
+    echo "$camera_name" > "$CAMERA_CACHE"
+    echo "$loopback_dev" > "$DEVICE_CACHE"
+
+    info "Camera:   $camera_name"
+    info "Loopback: $loopback_dev"
+
+    # Check for monitor binary
+    if [[ ! -x "$MONITOR_BIN" ]]; then
+        die "camera-relay-monitor not found at $MONITOR_BIN.
+Run the installer to build it, or use 'camera-relay start' for always-on mode."
+    fi
+
+    echo $$ > "$PID_FILE"
+    echo "idle" > "$STATE_CACHE"
+
+    info "Starting on-demand relay daemon..."
+    info "Camera pipeline will activate when an app opens the device"
+
+    local pipeline_pid=""
+    local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.log"
+
+    # Clean up all children on exit (monitor runs in process substitution)
+    cleanup_on_demand() {
+        [[ -n "$pipeline_pid" ]] && kill "$pipeline_pid" 2>/dev/null
+        pkill -P $$ 2>/dev/null  # kill monitor and any other children
+        rm -f "$PID_FILE" "$STATE_CACHE"
+    }
+    trap cleanup_on_demand EXIT
+
+    # Read events from the monitor. It emits: READY, START, STOP
+    while IFS= read -r event; do
+        case "$event" in
+            READY)
+                info "Monitor ready, device visible to apps"
+                ;;
+            START)
+                if [[ -z "$pipeline_pid" ]] || ! kill -0 "$pipeline_pid" 2>/dev/null; then
+                    info "Client connected — starting camera pipeline..."
+                    echo "streaming" > "$STATE_CACHE"
+                    pipeline_pid=$(start_pipeline "$camera_name" "$loopback_dev" true) || {
+                        warn "Failed to start pipeline"
+                        pipeline_pid=""
+                        echo "idle" > "$STATE_CACHE"
+                        continue
+                    }
+                    info "Pipeline started (PID $pipeline_pid)"
+                fi
+                ;;
+            STOP)
+                if [[ -n "$pipeline_pid" ]] && kill -0 "$pipeline_pid" 2>/dev/null; then
+                    info "All clients disconnected — stopping camera pipeline"
+                    stop_pipeline "$pipeline_pid"
+                    pipeline_pid=""
+                    echo "idle" > "$STATE_CACHE"
+                    info "Pipeline stopped, camera released"
+                fi
+                ;;
+        esac
+    done < <("$MONITOR_BIN" "$loopback_dev" 1920 1080 2>"$gst_log")
+
+    info "On-demand relay stopped"
 }
 
 cmd_stop() {
@@ -269,7 +485,6 @@ cmd_stop() {
     pid=$(cat "$PID_FILE")
     info "Stopping relay (PID $pid)..."
 
-    # Graceful shutdown first (SIGTERM), then force (SIGKILL)
     kill "$pid" 2>/dev/null || true
     local waited=0
     while kill -0 "$pid" 2>/dev/null && (( waited < 5 )); do
@@ -280,8 +495,10 @@ cmd_stop() {
         kill -9 "$pid" 2>/dev/null || true
     fi
 
-    rm -f "$PID_FILE"
-    # Keep cache files so status can still show last-known camera/device
+    # Also kill any child gst-launch processes
+    pkill -P "$pid" 2>/dev/null || true
+
+    rm -f "$PID_FILE" "$STATE_CACHE"
     info "Relay stopped"
 }
 
@@ -289,7 +506,7 @@ cmd_status() {
     local json=false
     [[ "${1:-}" == "--json" ]] && json=true
 
-    local running=false persistent=false camera="" device=""
+    local running=false persistent=false camera="" device="" state="stopped"
 
     if is_running; then
         running=true
@@ -298,39 +515,36 @@ cmd_status() {
         persistent=true
     fi
 
-    # Read from cache files written by cmd_start() — NEVER probe camera or
-    # PipeWire here.  The systray polls status every 5 seconds and any
-    # libcamera/PipeWire interaction disrupts the active stream (image flip,
-    # color corruption on the Simple pipeline handler).
     camera=$(cat "$CAMERA_CACHE" 2>/dev/null) || camera=""
+    [[ -z "$camera" ]] && camera=$(detect_camera_name 2>/dev/null) || true
     [[ -z "$camera" ]] && camera="(not detected)"
     device=$(cat "$DEVICE_CACHE" 2>/dev/null) || device=""
     [[ -z "$device" ]] && device="(not loaded)"
+    state=$(cat "$STATE_CACHE" 2>/dev/null) || state="stopped"
+    $running || state="stopped"
 
     if $json; then
-        # Escape backslashes for valid JSON (camera names like \_SB_.LNK0
-        # contain literal backslashes that break JSON parsing)
         local json_camera="${camera//\\/\\\\}"
         local json_device="${device//\\/\\\\}"
-        printf '{"running":%s,"persistent":%s,"camera":"%s","device":"%s"}\n' \
-            "$running" "$persistent" "$json_camera" "$json_device"
+        printf '{"running":%s,"persistent":%s,"camera":"%s","device":"%s","state":"%s"}\n' \
+            "$running" "$persistent" "$json_camera" "$json_device" "$state"
     else
         echo "Camera Relay Status"
         echo "─────────────────────"
         if $running; then
             local pid
             pid=$(cat "$PID_FILE" 2>/dev/null)
-            echo "  State:      RUNNING (PID $pid)"
+            if [[ "$state" == "idle" ]]; then
+                echo "  State:      ON-DEMAND (idle, PID $pid)"
+            else
+                echo "  State:      STREAMING (PID $pid)"
+            fi
         else
             echo "  State:      STOPPED"
         fi
-        echo "  Persistent: $( $persistent && echo "ENABLED (auto-starts on login)" || echo "disabled" )"
+        echo "  Persistent: $( $persistent && echo "ENABLED (on-demand, auto-starts on login)" || echo "disabled" )"
         echo "  Camera:     $camera"
         echo "  Loopback:   $device"
-        if $persistent; then
-            echo ""
-            echo "  Note: Persistent mode uses ~2-3% extra battery per charge cycle"
-        fi
     fi
 }
 
@@ -346,46 +560,49 @@ cmd_enable_persistent() {
     if ! $skip_confirm; then
         echo ""
         echo "  ┌──────────────────────────────────────────────────┐"
-        echo "  │           Battery Usage Warning                  │"
+        echo "  │           On-Demand Camera Relay                 │"
         echo "  │                                                  │"
-        echo "  │  Persistent mode keeps the camera relay running  │"
-        echo "  │  at all times after login. This uses:            │"
+        echo "  │  The relay daemon will start on login and wait   │"
+        echo "  │  for apps to use the camera. Resource usage:     │"
         echo "  │                                                  │"
-        echo "  │    ~2-3% extra battery per charge cycle          │"
-        echo "  │    ~2-3% CPU while active                        │"
+        echo "  │    Idle:      Near-zero CPU and battery          │"
+        echo "  │    Streaming: ~2-3% CPU (only while in use)      │"
         echo "  │                                                  │"
-        echo "  │  The relay will auto-start on every login and    │"
-        echo "  │  run continuously in the background.             │"
+        echo "  │  The camera activates automatically when apps    │"
+        echo "  │  like Zoom or Chrome open the camera device,     │"
+        echo "  │  and deactivates when they close it.             │"
         echo "  │                                                  │"
         echo "  │  You can disable this later with:                │"
         echo "  │    camera-relay disable-persistent               │"
         echo "  └──────────────────────────────────────────────────┘"
         echo ""
-        read -rp "  Enable persistent mode? [y/N] " answer
+        read -rp "  Enable on-demand camera relay? [y/N] " answer
         case "$answer" in
             [yY]|[yY][eE][sS]) ;;
             *) info "Cancelled"; return 1 ;;
         esac
     fi
 
-    # Detect IPA path for the service
-    local ipa_path=""
+    # Detect paths for the service environment
+    local ipa_path="" gst_path=""
     ipa_path=$(detect_ipa_path 2>/dev/null) || true
+    gst_path=$(detect_gst_plugin_path 2>/dev/null) || true
 
     # Create systemd user service
     mkdir -p "$SERVICE_DIR"
     cat > "${SERVICE_DIR}/${SERVICE_NAME}" <<EOF
 [Unit]
-Description=Camera Relay (libcamera to v4l2loopback)
+Description=Camera Relay (on-demand libcamera to v4l2loopback)
 After=pipewire.service wireplumber.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/camera-relay start --foreground
+ExecStart=/usr/local/bin/camera-relay start --on-demand
 ExecStop=/usr/local/bin/camera-relay stop
 Restart=on-failure
 RestartSec=5
 ${ipa_path:+Environment=LIBCAMERA_IPA_MODULE_PATH=$ipa_path}
+${gst_path:+Environment=GST_PLUGIN_PATH=$gst_path}
 
 [Install]
 WantedBy=default.target
@@ -394,8 +611,8 @@ EOF
     systemctl --user daemon-reload
     systemctl --user enable --now "$SERVICE_NAME"
 
-    info "Persistent mode enabled"
-    info "The relay is now running and will auto-start on login"
+    info "On-demand relay enabled"
+    info "The camera device is now visible to apps and will activate on use"
     info "To disable later: camera-relay disable-persistent"
 }
 
@@ -420,21 +637,22 @@ usage() {
 Usage: camera-relay <command> [options]
 
 Commands:
-  start                 Start the camera relay
-  start --foreground    Start in foreground (for systemd)
+  start                 Start the camera relay (always-on streaming)
+  start --on-demand     Start on-demand daemon (activates on app use)
+  start --foreground    Start always-on relay in foreground (for systemd)
   stop                  Stop the camera relay
   status                Show relay status
   status --json         Show status as JSON
-  enable-persistent     Auto-start relay on login (battery warning)
+  enable-persistent     Auto-start on-demand relay on login
   enable-persistent --yes  Skip confirmation prompt
   disable-persistent    Remove auto-start
 
-The camera relay pipes libcamera output to a v4l2loopback device,
-making the camera available to apps that don't support PipeWire
-(e.g., Zoom, OBS Studio, VLC).
+The camera relay provides a standard V4L2 webcam device for apps that
+don't support PipeWire/libcamera (e.g., Zoom, OBS Studio, VLC).
 
-Note: While the relay is running, PipeWire apps cannot access the
-camera directly. Close the relay to use PipeWire apps.
+In on-demand mode (default for persistent), the daemon idles with
+near-zero resource usage. The camera only activates when an app
+opens the device, and stops when the last app closes it.
 EOF
 }
 

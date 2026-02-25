@@ -101,9 +101,17 @@ class CameraRelaySystray:
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        item_quit = Gtk.MenuItem(label="Quit")
-        item_quit.connect("activate", self._on_quit)
-        menu.append(item_quit)
+        item_hide = Gtk.MenuItem(label="Hide Indicator")
+        item_hide.connect("activate", self._on_hide)
+        menu.append(item_hide)
+
+        item_stop_hide = Gtk.MenuItem(label="Stop Relay & Hide")
+        item_stop_hide.connect("activate", self._on_stop_and_hide)
+        menu.append(item_stop_hide)
+
+        item_disable_hide = Gtk.MenuItem(label="Disable Relay & Hide")
+        item_disable_hide.connect("activate", self._on_disable_and_hide)
+        menu.append(item_disable_hide)
 
         menu.show_all()
         return menu
@@ -128,12 +136,14 @@ class CameraRelaySystray:
         status = self._get_status()
         self.running = status.get("running", False)
         self.persistent = status.get("persistent", False)
+        self.state = status.get("state", "stopped")
 
         # Update menu labels
         if hasattr(self, "item_toggle"):
-            self.item_toggle.set_label(
-                "Stop Relay" if self.running else "Start Relay"
-            )
+            if self.running:
+                self.item_toggle.set_label("Stop Relay")
+            else:
+                self.item_toggle.set_label("Start Relay")
         if hasattr(self, "item_persistent"):
             self.item_persistent.set_label(
                 "Disable Persistent Mode"
@@ -141,12 +151,26 @@ class CameraRelaySystray:
                 else "Enable Persistent Mode"
             )
         if hasattr(self, "item_status"):
-            state = "RUNNING" if self.running else "STOPPED"
-            persist = " (persistent)" if self.persistent else ""
-            self.item_status.set_label(f"Status: {state}{persist}")
+            if not self.running:
+                label = "Status: STOPPED"
+            elif self.state == "idle":
+                label = "Status: ON-DEMAND (idle)"
+            elif self.state == "streaming":
+                label = "Status: STREAMING"
+            else:
+                label = "Status: RUNNING"
+            if self.persistent:
+                label += " (persistent)"
+            self.item_status.set_label(label)
 
-        # Update icon
-        icon = "camera-video-symbolic" if self.running else "camera-disabled-symbolic"
+        # Update icon: streaming=active, idle/on-demand=ready, stopped=disabled
+        if self.running and self.state == "streaming":
+            icon = "camera-video-symbolic"
+        elif self.running:
+            icon = "camera-switch-symbolic"  # idle/on-demand
+        else:
+            icon = "camera-disabled-symbolic"
+
         if USE_APPINDICATOR:
             self.indicator.set_icon(icon)
         else:
@@ -209,17 +233,18 @@ class CameraRelaySystray:
 
     def _show_persistent_warning(self):
         dialog = Gtk.MessageDialog(
-            message_type=Gtk.MessageType.WARNING,
+            message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.OK_CANCEL,
-            text="Enable Persistent Mode?",
+            text="Enable On-Demand Camera Relay?",
         )
         dialog.format_secondary_text(
-            "This will keep the camera relay running at all times after login.\n\n"
-            "Battery impact: ~2-3% extra per charge cycle\n"
-            "CPU usage: ~2-3% while active\n\n"
-            "The relay will auto-start on every login and run continuously "
-            "in the background. You can disable this later from this menu "
-            "or by running:\n\n"
+            "The camera relay daemon will start on login and make the "
+            "camera visible to apps like Zoom, OBS, and Chrome.\n\n"
+            "Idle: Near-zero CPU and battery usage\n"
+            "Streaming: ~2-3% CPU (only while camera is in use)\n\n"
+            "The camera activates automatically when an app opens it, "
+            "and deactivates when the last app closes it.\n\n"
+            "You can disable this later from this menu or by running:\n\n"
             "  camera-relay disable-persistent"
         )
         dialog.set_title("Camera Relay")
@@ -231,8 +256,39 @@ class CameraRelaySystray:
             subprocess.Popen([RELAY_CMD, "enable-persistent", "--yes"])
             GLib.timeout_add(1000, self._poll_status)
 
-    def _on_quit(self, _widget):
+    def _on_hide(self, _widget):
+        """Just close the indicator — relay keeps running."""
         Gtk.main_quit()
+
+    def _on_stop_and_hide(self, _widget):
+        """Stop the relay now but keep persistent enabled (restarts on next login)."""
+        subprocess.run([RELAY_CMD, "stop"], capture_output=True, timeout=10)
+        Gtk.main_quit()
+
+    def _on_disable_and_hide(self, _widget):
+        """Disable persistent mode, stop relay, and close indicator."""
+        dialog = Gtk.MessageDialog(
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text="Disable Camera Relay?",
+        )
+        dialog.format_secondary_text(
+            "This will stop the camera relay and prevent it from starting "
+            "on login. The internal camera won't be visible to most apps "
+            "(Zoom, Chrome, OBS, etc.) without it.\n\n"
+            "The relay uses near-zero CPU when idle — there's usually no "
+            "reason to disable it.\n\n"
+            "You can re-enable it later by running:\n\n"
+            "  camera-relay enable-persistent"
+        )
+        dialog.set_title("Camera Relay")
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK:
+            subprocess.run([RELAY_CMD, "disable-persistent"], capture_output=True, timeout=10)
+            subprocess.run([RELAY_CMD, "stop"], capture_output=True, timeout=10)
+            Gtk.main_quit()
 
 
 if __name__ == "__main__":
