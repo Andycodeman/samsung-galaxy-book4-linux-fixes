@@ -68,8 +68,8 @@ To manage the relay:
 
 ```bash
 camera-relay status          # Show current state
-camera-relay start           # Start relay (foreground GStreamer pipeline)
-camera-relay start-ondemand  # Start on-demand mode (idle until app opens device)
+camera-relay start               # Start relay (always-on, foreground)
+camera-relay start --on-demand   # Start on-demand mode (idle until app opens device)
 camera-relay stop            # Stop relay
 camera-relay enable-persistent   # Enable on-demand mode at login (recommended)
 camera-relay disable-persistent  # Disable auto-start
