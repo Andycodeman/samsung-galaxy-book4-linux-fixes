@@ -227,6 +227,10 @@ start_pipeline() {
     # Camera names like "\_SB_.LNK0" need double-escaping.
     local gst_camera_name="${camera_name//\\/\\\\}"
 
+    # Use io-mode=mmap for v4l2sink — kernel-managed buffers are the most
+    # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
+    # some Fedora systems; io-mode=auto (0) may fall through to rw.
+    # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
     local -a gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
@@ -234,7 +238,7 @@ start_pipeline() {
         ! videoflip method=none
         ! videoconvert
         ! "video/x-raw,format=YUY2"
-        ! v4l2sink device="$loopback_dev" sync=false
+        ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
     )
 
     "${gst_cmd[@]}" >"$gst_log" 2>&1 &
@@ -242,37 +246,8 @@ start_pipeline() {
 
     if $fast; then
         sleep 0.5
-        if ! kill -0 "$pid" 2>/dev/null; then
-            gst_cmd=(
-                gst-launch-1.0 -e
-                libcamerasrc camera-name="$gst_camera_name"
-                ! queue max-size-buffers=3 leaky=downstream
-                ! videoflip method=none
-                ! videoconvert
-                ! "video/x-raw,format=YUY2"
-                ! v4l2sink device="$loopback_dev" io-mode=1 sync=false
-            )
-            "${gst_cmd[@]}" >"$gst_log" 2>&1 &
-            pid=$!
-            sleep 0.5
-        fi
     else
         sleep 3
-        if ! kill -0 "$pid" 2>/dev/null; then
-            info "Default io-mode failed, retrying with MMAP (io-mode=1)..."
-            gst_cmd=(
-                gst-launch-1.0 -e
-                libcamerasrc camera-name="$gst_camera_name"
-                ! queue max-size-buffers=3 leaky=downstream
-                ! videoflip method=none
-                ! videoconvert
-                ! "video/x-raw,format=YUY2"
-                ! v4l2sink device="$loopback_dev" io-mode=1 sync=false
-            )
-            "${gst_cmd[@]}" >"$gst_log" 2>&1 &
-            pid=$!
-            sleep 3
-        fi
     fi
 
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -352,7 +327,7 @@ cmd_start() {
             ! videoflip method=none \
             ! videoconvert \
             ! "video/x-raw,format=YUY2" \
-            ! v4l2sink device="$loopback_dev" sync=false
+            ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
     else
         info "Starting relay..."
         local pid

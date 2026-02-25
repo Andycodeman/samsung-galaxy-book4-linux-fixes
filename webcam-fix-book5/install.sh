@@ -740,12 +740,35 @@ if [[ -d "$RELAY_DIR" ]]; then
         fi
     fi
 
-    # Deploy v4l2loopback config (only if no existing config)
+    # Deploy v4l2loopback config
     if ! grep -rqs "v4l2loopback" /etc/modprobe.d/ 2>/dev/null; then
         sudo cp "$RELAY_DIR/99-camera-relay-loopback.conf" /etc/modprobe.d/
         echo "  ✓ Installed v4l2loopback config (/etc/modprobe.d/99-camera-relay-loopback.conf)"
     else
         echo "  ✓ Existing v4l2loopback config found — not overwriting"
+    fi
+
+    # Check for stale v4l2loopback with wrong label (e.g. OBS Virtual Camera)
+    if lsmod 2>/dev/null | grep -q v4l2loopback; then
+        local current_label
+        current_label=$(cat /sys/devices/virtual/video4linux/video*/name 2>/dev/null | grep -v "Intel IPU" | head -1)
+        if [[ -n "$current_label" ]] && [[ "$current_label" != "Camera Relay" ]]; then
+            echo "  ⚠ v4l2loopback is currently loaded with label '$current_label'"
+            echo "    The camera relay expects 'Camera Relay'. Reloading module..."
+            sudo modprobe -r v4l2loopback 2>/dev/null || true
+            sudo modprobe v4l2loopback 2>/dev/null || true
+            local new_label
+            new_label=$(cat /sys/devices/virtual/video4linux/video*/name 2>/dev/null | grep -v "Intel IPU" | head -1)
+            if [[ "$new_label" == "Camera Relay" ]]; then
+                echo "  ✓ v4l2loopback reloaded with correct label"
+            else
+                echo "  ⚠ Could not reload v4l2loopback — a reboot may be needed"
+                echo "    If the old label persists after reboot, rebuild your initramfs:"
+                echo "    Ubuntu: sudo update-initramfs -u"
+                echo "    Fedora: sudo dracut --regenerate-all -f"
+                echo "    Arch:   sudo mkinitcpio -P"
+            fi
+        fi
     fi
 
     # Build and install on-demand monitor (C binary)
