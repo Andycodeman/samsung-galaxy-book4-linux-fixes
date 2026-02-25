@@ -20,6 +20,16 @@ curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive
 
 To uninstall: `sudo ./uninstall.sh && sudo reboot`
 
+### Mic Fix (internal microphone not working) — Galaxy Book4 / Book5
+
+> Updates SOF (Sound Open Firmware) and sets `dsp_driver=3` to enable the internal DMIC. The stock `linux-firmware` on Ubuntu 24.04 ships SOF v2023.12.1 which is too old for Meteor Lake DMIC support. This pulls v2025.12.1+ from the upstream linux-firmware repo. **Note:** Fedora may already ship new enough firmware — check first with `sudo dmesg | grep "Booted firmware version"`.
+
+```bash
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book4-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book4-linux-fixes-main/mic-fix && sudo ./install.sh && sudo reboot
+```
+
+To uninstall: `sudo ./uninstall.sh && sudo reboot`
+
 ### Webcam Fix (built-in camera not detected) — Galaxy Book3 / Book4 (Meteor Lake / Raptor Lake)
 
 > **Recommended:** Uses the open-source libcamera stack with PipeWire. Supports **Ubuntu, Fedora, and Arch-based distros**. Includes an on-demand camera relay for apps that don't support PipeWire (Zoom, OBS, VLC) — near-zero CPU when idle, camera activates only when an app opens the device.
@@ -69,6 +79,18 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 > **Fedora / DNF-based distros:** The install script auto-detects Fedora and configures DKMS module signing using the akmods MOK key (`/etc/pki/akmods/`). If no key exists, it generates one with `kmodgenca` and prompts for enrollment. If modules still won't load after enrollment, check the [Secure Boot signing troubleshooting](speaker-fix/README.md#troubleshooting). Confirmed working on Fedora 43, kernel 6.18.9 (Galaxy Book4 Ultra).
 
+### [Mic Fix](mic-fix/) — SOF Firmware Update (Internal Microphone)
+
+The internal DMIC requires SOF (Sound Open Firmware) with a recent enough firmware version. Ubuntu 24.04's `linux-firmware` package ships SOF v2023.12.1, which doesn't support DMIC on Meteor Lake. This fix updates SOF firmware to v2025.12.1+ from the upstream linux-firmware repository and configures `dsp_driver=3`.
+
+- Downloads latest SOF firmware via sparse git checkout (no full repo clone)
+- Backs up existing firmware (reversible with `uninstall.sh`)
+- Sets `dsp_driver=3` in modprobe config for SOF driver selection
+- Rebuilds initramfs to include updated firmware
+- Supports Ubuntu, Fedora, and Arch
+
+> **Independent of speaker fix:** The mic fix (SOF firmware + DSP driver) and the speaker fix (MAX98390 amplifier driver) are separate layers. You likely need **both** for full audio on Galaxy Book4 Ultra.
+
 ### [Webcam Fix — Book3 / Book4](webcam-fix-libcamera/) — IPU6 + libcamera (Recommended)
 
 The built-in webcam uses Intel IPU6 (Meteor Lake or Raptor Lake) with an OmniVision OV02C10 sensor. This fix uses the open-source libcamera Simple pipeline handler with Software ISP, accessed through PipeWire. Includes IVSC module loading, initramfs configuration (eliminating the boot race condition), sensor tuning, WirePlumber rules to hide raw IPU6 nodes, and an on-demand camera relay for non-PipeWire apps (Zoom, OBS, VLC).
@@ -97,22 +119,22 @@ For Samsung Book5 models with the OV02E10 sensor, an additional [patched libcame
 
 The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). Whether they work on Linux **depends on your model and audio driver**:
 
-| Model | Platform | Default Driver | Mic (without speaker fix) | Mic (with speaker fix) |
-|-------|----------|---------------|--------------------------|----------------------|
-| Book4 Ultra | Meteor Lake | Legacy HDA | No | No |
-| Book4 Pro / Pro 360 | Meteor Lake | Legacy HDA | Unknown | No |
-| Book5 Pro | Lunar Lake | SOF | **Yes** | **Yes** (Ubuntu/Fedora confirmed) |
-| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **Yes** (Ubuntu/Fedora confirmed) |
+| Model | Platform | Default Driver | Mic (default) | Mic (with mic fix) |
+|-------|----------|---------------|--------------|-------------------|
+| Book4 Ultra | Meteor Lake | Legacy HDA | No | **Yes** (SOF firmware + dsp_driver=3) |
+| Book4 Pro / Pro 360 | Meteor Lake | Legacy HDA | No | **Yes** (expected — same hardware) |
+| Book5 Pro | Lunar Lake | SOF | **Yes** | **Yes** (already works) |
+| Book5 Pro 360 | Lunar Lake | SOF | **Yes** | **Yes** (already works) |
 
 **Good news for Book5 owners:** The speaker fix has been confirmed working on Galaxy Book5 Pro models, and the built-in microphone **continues to work** after installing the speaker fix. On Lunar Lake, the SOF driver coexists with the legacy HDA driver, so both speakers and DMIC work together.
 
 > **Arch-based distros (CachyOS, Manjaro, etc.):** The DMIC on Book5 models requires SOF firmware, which is **not installed by default** on Arch. If your mic doesn't work after installing the speaker fix, install the firmware: `sudo pacman -S sof-firmware` and reboot. This is not caused by the speaker fix — the mic may not have worked before either without this package.
 
-**For Book4 models:** The built-in DMIC does not work on Meteor Lake with the legacy HDA driver, regardless of whether the speaker fix is installed. The DMIC requires SOF support that is not yet available for Meteor Lake.
+**For Book4 models:** The built-in DMIC does not work on Meteor Lake with the legacy HDA driver (`dsp_driver=1`). The fix is to update SOF firmware and set `dsp_driver=3` — see the **[Mic Fix](mic-fix/)** installer which automates this. After installing, `arecord -l` should show a DMIC device.
 
-**When will Book4 mic work?** Native support is being developed in [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616), which will handle both speakers and DMIC together. However, this PR is on GitHub for development only — getting it into mainline Linux requires submitting patches via email to the [ALSA mailing list](https://mailman.alsa-project.org/mailman/listinfo/alsa-devel) for review by the HDA/sound maintainers. This has not happened yet, and there is **no confirmed timeline** for when it will land in a mainline kernel. It could still be a ways out. Once it eventually ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the built-in microphones should work automatically on Book4 models too.
+**When will this be automatic?** Native support is being developed in [thesofproject/linux PR #5616](https://github.com/thesofproject/linux/pull/5616), which will handle both speakers and DMIC together. However, this PR is on GitHub for development only — getting it into mainline Linux requires submitting patches via email to the [ALSA mailing list](https://mailman.alsa-project.org/mailman/listinfo/alsa-devel) for review by the HDA/sound maintainers. This has not happened yet, and there is **no confirmed timeline** for when it will land in a mainline kernel. Once it eventually ships in your distro kernel, the speaker fix in this repo will auto-detect native support and remove itself, and the mic fix can be safely uninstalled.
 
-**Workarounds for Book4 mic:**
+**Alternative workarounds (if you don't want to change SOF firmware):**
 - Use a **USB headset or microphone** — works immediately, no configuration needed
 - Use the **3.5mm headphone/mic combo jack** — the external mic input (ALC298 Node 0x18) is functional
 
