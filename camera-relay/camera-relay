@@ -253,23 +253,12 @@ setup_environment() {
     fi
 }
 
-# Check if videoflip is needed (libcamera 0.7.0+ GPU ISP DMA-BUF workaround).
-# On 0.7.0+, the Soft ISP outputs DMA-BUF frames that read as zeros through
-# v4l2loopback mmap. "videoflip method=none" forces a CPU-side buffer copy.
-# On older versions (0.5.x), videoflip must NOT be used — it strips rotation
-# metadata tags that libcamerasrc sets for downstream to handle, causing the
-# image to appear flipped with wrong colors on sensors using VFLIP/HFLIP.
-needs_videoflip() {
-    local ver
-    ver=$(pkg-config --modversion libcamera 2>/dev/null) || return 1
-    local major minor
-    major=$(echo "$ver" | cut -d. -f1)
-    minor=$(echo "$ver" | cut -d. -f2)
-    # 0.7.0+ needs the DMA-BUF workaround
-    (( major > 0 || minor >= 7 ))
-}
-
 # Start the GStreamer pipeline, return its PID.
+# Pipeline: libcamerasrc → queue → videoconvert (ABGR→YUY2) → v4l2sink
+# videoconvert handles both format conversion AND the implicit CPU-side buffer
+# copy needed for libcamera 0.7.0+ DMA-BUF frames (which read as zeros via
+# v4l2loopback mmap without a copy). No videoflip needed — it strips rotation
+# metadata on older libcamera versions, causing flipped/discolored output.
 # In fast mode (for on-demand), skip the 3s verification sleep.
 start_pipeline() {
     local camera_name="$1"
@@ -289,11 +278,6 @@ start_pipeline() {
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
         ! queue max-size-buffers=3 leaky=downstream
-    )
-    if needs_videoflip; then
-        gst_cmd+=( ! videoflip method=none )
-    fi
-    gst_cmd+=(
         ! videoconvert
         ! "video/x-raw,format=YUY2"
         ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
@@ -379,20 +363,12 @@ cmd_start() {
         echo "streaming" > "$STATE_CACHE"
         echo $$ > "$PID_FILE"
         local gst_camera_name="${camera_name//\\/\\\\}"
-        local -a fg_cmd=(
-            gst-launch-1.0 -e
-            libcamerasrc camera-name="$gst_camera_name"
-            ! queue max-size-buffers=3 leaky=downstream
-        )
-        if needs_videoflip; then
-            fg_cmd+=( ! videoflip method=none )
-        fi
-        fg_cmd+=(
-            ! videoconvert
-            ! "video/x-raw,format=YUY2"
+        exec gst-launch-1.0 -e \
+            libcamerasrc camera-name="$gst_camera_name" \
+            ! queue max-size-buffers=3 leaky=downstream \
+            ! videoconvert \
+            ! "video/x-raw,format=YUY2" \
             ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
-        )
-        exec "${fg_cmd[@]}"
     else
         info "Starting relay..."
         local pid
