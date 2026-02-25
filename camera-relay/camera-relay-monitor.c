@@ -35,7 +35,6 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <limits.h>
 #include <unistd.h>
 
 /* Event IDs for v4l2loopback versions */
@@ -62,13 +61,12 @@ static int xioctl(int fd, unsigned long request, void *arg)
 /* Count processes (other than ours and our children) that have this
  * device open. Skips our PID and the pipeline child PID.
  *
- * Optimizations vs naive /proc scan:
- *  - Skip non-numeric /proc entries early (d_name[0] check)
- *  - Only scan processes owned by our UID (skip system processes)
- *  - Use readlink() instead of stat() on fd symlinks (cheaper)
- *  - Match device path string instead of dev_t comparison
+ * Uses stat() + dev_t comparison on fd symlinks — this is path-
+ * independent and works regardless of how the device was opened
+ * (symlink, /dev/v4l/by-id, etc.). UID filtering skips system
+ * processes for efficiency.
  */
-static int count_other_openers(const char *dev_path, pid_t our_pid,
+static int count_other_openers(dev_t dev_id, pid_t our_pid,
 			       pid_t child_pid)
 {
 	DIR *proc_dir;
@@ -120,20 +118,16 @@ static int count_other_openers(const char *dev_path, pid_t our_pid,
 				continue;
 
 			char link_path[384];
-			char target[256];
-			ssize_t len;
+			struct stat st;
 
 			snprintf(link_path, sizeof(link_path),
 				 "%s/%s", fd_dir_path, fd_entry->d_name);
 
-			len = readlink(link_path, target,
-				       sizeof(target) - 1);
-			if (len > 0) {
-				target[len] = '\0';
-				if (strcmp(target, dev_path) == 0) {
-					found = 1;
-					break;
-				}
+			if (stat(link_path, &st) == 0 &&
+			    S_ISCHR(st.st_mode) &&
+			    st.st_rdev == dev_id) {
+				found = 1;
+				break;
 			}
 		}
 		closedir(fd_dir);
@@ -345,10 +339,10 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* Resolve device path for /proc polling (readlink comparison) */
-	char dev_realpath[PATH_MAX];
-	if (!realpath(device, dev_realpath)) {
-		fprintf(stderr, "ERROR: Cannot resolve %s: %s\n",
+	/* Get device stat for /proc polling (dev_t comparison) */
+	struct stat dev_stat;
+	if (stat(device, &dev_stat) < 0) {
+		fprintf(stderr, "ERROR: Cannot stat %s: %s\n",
 			device, strerror(errno));
 		free(black_frame);
 		free(frame_buf);
@@ -442,7 +436,7 @@ int main(int argc, char *argv[])
 						usleep(100000);
 						int clients =
 							count_other_openers(
-							dev_realpath,
+							dev_stat.st_rdev,
 							our_pid, 0);
 						if (clients > 0)
 							client_detected = 1;
@@ -453,7 +447,7 @@ int main(int argc, char *argv[])
 				 * No event support — poll /proc every 2s.
 				 */
 				int clients = count_other_openers(
-					dev_realpath, our_pid, 0);
+					dev_stat.st_rdev, our_pid, 0);
 				if (clients > 0 && prev_clients == 0)
 					client_detected = 1;
 				prev_clients = clients;
@@ -533,7 +527,7 @@ int main(int argc, char *argv[])
 
 			if (!need_stop && ++check_tick % 5 == 0) {
 				int clients = count_other_openers(
-					dev_realpath, our_pid,
+					dev_stat.st_rdev, our_pid,
 					child_pid);
 
 				if (clients > 0)
@@ -558,7 +552,7 @@ int main(int argc, char *argv[])
 
 			if (need_stop) {
 				int clients = count_other_openers(
-					dev_realpath, our_pid,
+					dev_stat.st_rdev, our_pid,
 					child_pid);
 				fprintf(stderr,
 					"[monitor] Stopping pipeline"
@@ -622,7 +616,7 @@ int main(int argc, char *argv[])
 				 * a brief gap.
 				 */
 				int remaining = count_other_openers(
-					dev_realpath, our_pid, 0);
+					dev_stat.st_rdev, our_pid, 0);
 				if (remaining > 0) {
 					fprintf(stderr,
 						"[monitor] %d client(s)"
