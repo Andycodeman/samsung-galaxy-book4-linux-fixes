@@ -42,7 +42,7 @@ detect_camera_name() {
         fi
     fi
 
-    # Prefer pw-cli (reads PipeWire metadata, does NOT open the camera).
+    # Method 1: pw-cli (reads PipeWire metadata, does NOT open the camera).
     # cam -l opens the libcamera CameraManager which disrupts active streams
     # on the Simple pipeline handler (causes image flip/color corruption).
     # Filter out USB cameras (XHCI path) — we want the internal MIPI camera.
@@ -59,26 +59,67 @@ detect_camera_name() {
         fi
     fi
 
-    # Fallback: cam -l (only safe when no other app is using the camera)
+    # Method 2: cam -l (only safe when no other app is using the camera)
     # Output format: "1: 'ov02c10' (\_SB_.PC00.LNK0)"
     # Extract the camera ID from parentheses — this is what gst-launch needs
     # for the camera-name property (not the display name in quotes).
-    if command -v cam &>/dev/null; then
+    local cam_cmd=""
+    if [[ -x /usr/local/bin/cam ]]; then
+        cam_cmd="/usr/local/bin/cam"
+    elif command -v cam &>/dev/null; then
+        cam_cmd="cam"
+    fi
+    if [[ -n "$cam_cmd" ]]; then
         local name
-        name=$(cam -l 2>/dev/null | grep -oP '\(([^)]+)\)' | head -1 | tr -d '()')
+        name=$("$cam_cmd" -l 2>/dev/null | grep -oP '\(([^)]+)\)' | head -1 | tr -d '()')
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
             return 0
         fi
         # Fallback to quoted display name if no parenthesized ID
-        name=$(cam -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
+        name=$("$cam_cmd" -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
             return 0
         fi
     fi
+
+    # Method 3: Probe via GStreamer device monitor
+    # Works when pw-cli and cam are both unavailable (e.g. Fedora minimal install).
+    # gst-device-monitor-1.0 lists PipeWire and libcamera sources with properties.
+    # device.name for libcamera sources is "libcamera_device.<camera-name>".
+    if command -v gst-device-monitor-1.0 &>/dev/null; then
+        local name
+        name=$(timeout 5 gst-device-monitor-1.0 Video/Source 2>/dev/null \
+            | grep 'device\.name = libcamera_device\.' \
+            | grep -vi 'xhci\|uvc' \
+            | head -1 \
+            | sed 's/.*libcamera_device\.//' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ -n "$name" ]]; then
+            echo "$name" > "$CAMERA_CACHE"
+            echo "$name"
+            return 0
+        fi
+    fi
+
+    # Method 4: Read ACPI path from sysfs (last resort, no userspace tools needed)
+    # The OVTI02C1 (Book3/Book4) or OVTI02E1 (Book5) sensor registers as an i2c
+    # device. Its ACPI firmware node path IS the libcamera camera-name.
+    # e.g. /sys/bus/i2c/devices/i2c-OVTI02C1:00/firmware_node/path → \_SB_.PC00.LNK0
+    local acpi_dev
+    for acpi_dev in /sys/bus/i2c/devices/i2c-OVTI*; do
+        [[ -d "$acpi_dev" ]] || continue
+        local name
+        name=$(cat "$acpi_dev/firmware_node/path" 2>/dev/null)
+        if [[ -n "$name" ]]; then
+            echo "$name" > "$CAMERA_CACHE"
+            echo "$name"
+            return 0
+        fi
+    done
 
     return 1
 }
