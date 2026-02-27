@@ -140,7 +140,7 @@ Quick test:
 gst-launch-1.0 libcamerasrc ! videoconvert ! autovideosink
 
 # V4L2 test (requires camera-relay running)
-mpv av://v4l2:/dev/video0 --profile=low-latency
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed --no-correct-pts
 ```
 
 ---
@@ -180,9 +180,11 @@ Source-built libcamera (Ubuntu) also creates:
 By default, `mpv` and `ffplay` buffer video frames which adds ~2 seconds of lag. Use these flags for real-time preview:
 
 ```bash
-mpv av://v4l2:/dev/video0 --profile=low-latency --untimed
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed --no-correct-pts
 ffplay -f video4linux2 -tune zerolatency -vf "setpts=0" /dev/video0
 ```
+
+The `--no-correct-pts` flag tells MPV to ignore v4l2loopback frame timestamps, which prevents stutter and a cosmetic timer drift on some distros (notably Fedora with v4l2loopback 0.15.x).
 
 Replace `/dev/video0` with your camera device (e.g. `/dev/video32` for the relay). VLC and Zoom don't need these flags — they handle latency correctly by default.
 

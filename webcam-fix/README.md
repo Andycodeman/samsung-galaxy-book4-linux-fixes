@@ -61,7 +61,7 @@ The webcam works correctly with: **Firefox**, **Chromium**, **Zoom**, **Microsof
 Quick test:
 
 ```bash
-mpv av://v4l2:/dev/video0 --profile=low-latency
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed --no-correct-pts
 ```
 
 ---
@@ -394,7 +394,7 @@ file /tmp/webcam_test.jpg
 # Should output: JPEG image data, baseline, precision 8, 1920x1080 (or similar), components 3
 
 # Live preview
-mpv av://v4l2:/dev/video0 --profile=low-latency
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed --no-correct-pts
 ```
 
 The webcam should now appear as **"Intel MIPI Camera"** in any V4L2-compatible application: Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC, etc. See [Known App Issues](#known-app-issues) at the top of this document for Cheese and GNOME Camera compatibility.
