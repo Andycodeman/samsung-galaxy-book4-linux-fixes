@@ -231,8 +231,12 @@ static int start_pipeline(char **cmd, pid_t *child_pid)
 		return -1;
 	}
 
-	/* Try to increase pipe buffer for better throughput */
-	fcntl(pipefd[0], F_SETPIPE_SZ, 1048576);
+	/* Pipe buffer must be >= frame size to avoid stalls.
+	 * YUY2 1920x1080 = ~4MB per frame. With a 1MB pipe,
+	 * each frame needs multiple fill/drain cycles causing lag.
+	 * Request 8MB (2 frames) so a full frame can be written
+	 * without blocking on the reader. */
+	fcntl(pipefd[0], F_SETPIPE_SZ, 8388608);
 
 	pid_t pid = fork();
 	if (pid < 0) {
@@ -523,53 +527,44 @@ int main(int argc, char *argv[])
 			 */
 			int need_stop = 0;
 
-			struct pollfd pfd = {
-				.fd = pipe_fd, .events = POLLIN
-			};
-			int ret = poll(&pfd, 1, 200);
-
-			if (ret > 0 && (pfd.revents & POLLIN)) {
-				int n = read_full(pipe_fd, frame_buf,
-						  frame_size);
-				if (n == frame_size) {
-					(void)!write(fd, frame_buf,
-						     frame_size);
-					rapid_fails = 0;  /* got real data */
-				} else {
-					/* Pipeline died (EOF/error) */
-					fprintf(stderr,
-						"[monitor] Pipeline"
-						" EOF/error (read=%d"
-						" of %d)\n",
-						n, frame_size);
-					need_stop = 1;
-				}
-			} else if (ret > 0 &&
-				   (pfd.revents & (POLLHUP | POLLERR))) {
+			/*
+			 * Tight blocking read — no poll().
+			 * read_full blocks until a full frame arrives,
+			 * then we write immediately. This is critical
+			 * for low latency — poll() between frames
+			 * causes periodic stutter.
+			 *
+			 * During pipeline startup (~2-3s), read_full
+			 * blocks until the first frame arrives. The
+			 * last black frame written in IDLE state keeps
+			 * the device active for clients during this
+			 * time. If the pipeline dies, read_full returns
+			 * short and we handle it below.
+			 */
+			int n = read_full(pipe_fd, frame_buf,
+					  frame_size);
+			if (n == frame_size) {
+				(void)!write(fd, frame_buf,
+					     frame_size);
+				rapid_fails = 0;
+			} else {
 				fprintf(stderr,
-					"[monitor] Pipeline pipe"
-					" closed (revents=0x%x)\n",
-					pfd.revents);
+					"[monitor] Pipeline"
+					" EOF/error (read=%d"
+					" of %d)\n",
+					n, frame_size);
 				need_stop = 1;
-			} else if (ret == 0) {
-				/*
-				 * No frame data within 200ms.
-				 * Write a black frame to keep the
-				 * device active during pipeline init.
-				 */
-				(void)!write(fd, black_frame, frame_size);
 			}
 
 			/*
 			 * Check client count via /proc every ~1 second.
-			 * poll at 200ms means ~5 iterations per second.
-			 * Check every 5th iteration.
+			 * At ~30fps, check every 30th frame.
 			 */
 			static int check_tick = 0;
 			static int idle_ticks = 0;
 			static int had_clients = 0;
 
-			if (!need_stop && ++check_tick % 5 == 0) {
+			if (!need_stop && ++check_tick % 30 == 0) {
 				int clients = count_other_openers(
 					dev_stat.st_rdev, our_pid,
 					child_pid);
