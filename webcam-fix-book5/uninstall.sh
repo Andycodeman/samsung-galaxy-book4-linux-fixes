@@ -146,6 +146,7 @@ sudo rm -f /usr/share/applications/camera-relay-systray.desktop
 if [[ -f /etc/modprobe.d/99-camera-relay-loopback.conf ]] && \
    grep -q "Camera Relay" /etc/modprobe.d/99-camera-relay-loopback.conf 2>/dev/null; then
     sudo rm -f /etc/modprobe.d/99-camera-relay-loopback.conf
+    sudo rm -f /etc/modules-load.d/v4l2loopback.conf
     # Fedora: rebuild initramfs so dracut doesn't load v4l2loopback with stale config
     if command -v dracut &>/dev/null; then
         echo "  Rebuilding initramfs to remove v4l2loopback config..."

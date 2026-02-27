@@ -159,6 +159,7 @@ The install script creates these files:
 | `/usr/share/libcamera/ipa/simple/ov02c10.yaml` | Sensor color tuning with CCM |
 | `/usr/local/bin/camera-relay` | On-demand camera relay CLI tool |
 | `/usr/local/bin/camera-relay-monitor` | V4L2 event monitor for on-demand activation |
+| `/etc/modules-load.d/v4l2loopback.conf` | Load v4l2loopback module at boot |
 | `/etc/modprobe.d/99-camera-relay-loopback.conf` | v4l2loopback config for camera relay |
 | `/usr/local/share/camera-relay/camera-relay-systray.py` | System tray GUI |
 | `/usr/share/applications/camera-relay-systray.desktop` | Desktop entry for systray |
@@ -169,6 +170,21 @@ Source-built libcamera (Ubuntu) also creates:
 |------|---------|
 | `/etc/profile.d/libcamera-ipa.sh` | IPA module path (login shells) |
 | `/etc/environment.d/libcamera-ipa.conf` | IPA module path (systemd sessions) |
+
+---
+
+## Tips
+
+### Low-latency video preview with mpv / ffplay
+
+By default, `mpv` and `ffplay` buffer video frames which adds ~2 seconds of lag. Use these flags for real-time preview:
+
+```bash
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed
+ffplay -f video4linux2 -tune zerolatency -vf "setpts=0" /dev/video0
+```
+
+Replace `/dev/video0` with your camera device (e.g. `/dev/video32` for the relay). VLC and Zoom don't need these flags — they handle latency correctly by default.
 
 ---
 

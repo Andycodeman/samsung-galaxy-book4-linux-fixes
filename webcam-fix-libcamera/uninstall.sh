@@ -29,6 +29,7 @@ pkill -f "camera-relay start" 2>/dev/null || true
 sudo rm -f /usr/local/bin/camera-relay
 sudo rm -f /usr/local/bin/camera-relay-monitor
 sudo rm -f /etc/modprobe.d/99-camera-relay-loopback.conf
+sudo rm -f /etc/modules-load.d/v4l2loopback.conf
 sudo rm -rf /usr/local/share/camera-relay
 sudo rm -f /usr/share/applications/camera-relay-systray.desktop
 # Remove user service file if still present

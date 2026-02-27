@@ -745,6 +745,10 @@ if [[ -d "$RELAY_DIR" ]]; then
     sudo cp "$RELAY_DIR/99-camera-relay-loopback.conf" /etc/modprobe.d/
     echo "  ✓ Installed v4l2loopback config (/etc/modprobe.d/99-camera-relay-loopback.conf)"
 
+    # Ensure v4l2loopback loads at boot (modprobe.d only sets options, doesn't trigger load)
+    echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
+    echo "  ✓ Installed v4l2loopback autoload (/etc/modules-load.d/v4l2loopback.conf)"
+
     # Fedora: rebuild initramfs so dracut picks up the new v4l2loopback config.
     # Without this, v4l2loopback-akmods loads the module from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.

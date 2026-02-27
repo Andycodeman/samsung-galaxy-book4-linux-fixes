@@ -276,10 +276,26 @@ The install script creates these files:
 | `/var/lib/libcamera-bayer-fix-backup/` | Backup of original libcamera files (OV02E10 bayer fix only) |
 | `/usr/local/bin/camera-relay` | On-demand camera relay CLI tool |
 | `/usr/local/bin/camera-relay-monitor` | V4L2 event monitor for on-demand activation |
+| `/etc/modules-load.d/v4l2loopback.conf` | Load v4l2loopback module at boot |
 | `/etc/modprobe.d/99-camera-relay-loopback.conf` | v4l2loopback config for camera relay |
 | `/usr/local/share/camera-relay/camera-relay-systray.py` | System tray GUI for camera relay |
 
 The ipu-bridge-fix and bayer-fix files are only installed on Samsung 940XHA/960XHA models with OV02E10 sensor. The ipu-bridge fix auto-removes when the kernel includes the Samsung rotation entries. All files are removed by `uninstall.sh`.
+
+---
+
+## Tips
+
+### Low-latency video preview with mpv / ffplay
+
+By default, `mpv` and `ffplay` buffer video frames which adds ~2 seconds of lag. Use these flags for real-time preview:
+
+```bash
+mpv av://v4l2:/dev/video0 --profile=low-latency --untimed
+ffplay -f video4linux2 -tune zerolatency -vf "setpts=0" /dev/video0
+```
+
+Replace `/dev/video0` with your camera device (e.g. `/dev/video32` for the relay). VLC and Zoom don't need these flags — they handle latency correctly by default.
 
 ---
 
