@@ -57,7 +57,7 @@ elif command -v dnf >/dev/null 2>&1; then
     # Check libcamera version — IPU7 needs libcamera 0.5.2+ with Simple pipeline
     # handler and Software ISP. Fedora 43 ships 0.5.2, Fedora 44 ships 0.7.0.
     LIBCAMERA_VER=$(ls -l /usr/lib64/libcamera.so.* /usr/lib/libcamera.so.* 2>/dev/null \
-        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | head -1 || true)
+        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
     if [[ -n "$LIBCAMERA_VER" ]]; then
         LIBCAMERA_MAJOR=$(echo "$LIBCAMERA_VER" | cut -d. -f1)
         LIBCAMERA_MINOR=$(echo "$LIBCAMERA_VER" | cut -d. -f2)
@@ -72,7 +72,7 @@ elif command -v apt >/dev/null 2>&1; then
     # Note: cam --version doesn't exist in all libcamera versions (e.g. 0.7.0).
     # Use the libcamera.so symlink version instead.
     LIBCAMERA_VER=$(ls -l /usr/local/lib/*/libcamera.so.* /usr/local/lib/libcamera.so.* /usr/lib/*/libcamera.so.* /usr/lib/libcamera.so.* 2>/dev/null \
-        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | head -1 || true)
+        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
     if [[ -z "$LIBCAMERA_VER" ]]; then
         echo "ERROR: Ubuntu detected but libcamera is not installed."
         echo ""
