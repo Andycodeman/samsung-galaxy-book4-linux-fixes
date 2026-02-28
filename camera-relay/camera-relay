@@ -276,11 +276,20 @@ start_pipeline() {
     # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
     # some Fedora systems; io-mode=auto (0) may fall through to rw.
     # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
+    # RELAY_COLOR_FILTER: optional GStreamer element(s) for color correction.
+    # Set in service environment to apply per-sensor tuning, e.g.:
+    #   RELAY_COLOR_FILTER="videobalance saturation=0.85"
+    local -a color_filter=()
+    if [[ -n "${RELAY_COLOR_FILTER:-}" ]]; then
+        color_filter=(! $RELAY_COLOR_FILTER)
+    fi
+
     local -a gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
         ! queue max-size-buffers=3 leaky=downstream
         ! videoconvert
+        "${color_filter[@]}"
         ! "video/x-raw,format=YUY2"
         ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
     )
@@ -440,11 +449,17 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
     # This avoids the writer fd handoff gap — the monitor always holds
     # the device open, so ready_for_capture never drops.
     local gst_camera_name="${camera_name//\\/\\\\}"
+    local -a color_filter=()
+    if [[ -n "${RELAY_COLOR_FILTER:-}" ]]; then
+        color_filter=(! $RELAY_COLOR_FILTER)
+    fi
+
     local -a gst_cmd=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
         ! queue max-size-buffers=3 leaky=downstream
         ! videoconvert
+        "${color_filter[@]}"
         ! "video/x-raw,format=YUY2,width=1920,height=1080"
         ! fdsink fd=3 sync=false
     )
