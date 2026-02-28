@@ -10,14 +10,18 @@
  * same conversion works fine in standalone gst-launch pipelines.
  *
  * FIX:
- * Intercept gst_element_factory_make() and replace each "videoconvert"
- * element with a bin containing two converters with an NV12 capsfilter
- * between them: "videoconvert ! video/x-raw,format=NV12 ! videoconvert"
+ * Intercept gst_element_factory_make() and replace the two CameraBin
+ * videoconvert elements that touch the v4l2loopback source buffer
+ * (vfbin-csp and src-videoconvert) with a bin containing two converters
+ * and an NV12 capsfilter: "videoconvert ! video/x-raw,format=NV12 ! videoconvert"
  *
  * The first converter reads from the (potentially unsafe) source buffer
  * and writes into a NEWLY ALLOCATED NV12 buffer. The second converter
  * then reads from this safe, owned buffer. This breaks the dependency
  * on the original source buffer's lifetime.
+ *
+ * Only 2 of CameraBin's ~7 videoconvert elements are wrapped — the rest
+ * are left untouched to minimize CPU overhead.
  *
  * BUILD:
  *   gcc -shared -fPIC -o cheese-camerabin-fix.so cheese-camerabin-fix.c -ldl
@@ -46,9 +50,13 @@ GstElement* gst_element_factory_make(const char *factoryname, const char *name) 
         parse_bin_fn = dlsym(RTLD_DEFAULT, "gst_parse_bin_from_description");
     }
 
-    /* Only intercept top-level videoconvert creation */
+    /* Only intercept the viewfinderbin's converter (vfbin-csp) — that's
+     * the specific element where the buffer use-after-free crash occurs.
+     * Other videoconvert instances in CameraBin are left untouched. */
     if (!inside_fix && parse_bin_fn &&
-        strcmp(factoryname, "videoconvert") == 0) {
+        strcmp(factoryname, "videoconvert") == 0 &&
+        name && (strcmp(name, "vfbin-csp") == 0 ||
+                 strcmp(name, "src-videoconvert") == 0)) {
 
         inside_fix = 1;
 
