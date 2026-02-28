@@ -24,3 +24,4 @@ launch.sh
 
 # Compiled binaries (built from source during install)
 camera-relay/camera-relay-monitor
+*.so
